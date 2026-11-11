@@ -1,10 +1,36 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FlightDeck Bid</title><style>
-:root{font-family:system-ui;color:#e7edf7;background:#101827}body{max-width:1200px;margin:auto;padding:24px}header,section{background:#19263a;border:1px solid #34445d;border-radius:14px;padding:20px;margin-bottom:18px}h1,h2{margin-top:0}button,input,select,textarea{font:inherit;padding:9px;border-radius:6px;border:1px solid #66758b;margin:4px;background:#fff;color:#152137}button{cursor:pointer;background:#9ddbe7}label{display:inline-block;margin:5px}table{border-collapse:collapse;width:100%;display:block;overflow:auto}td,th{text-align:left;padding:10px;border-bottom:1px solid #34445d;white-space:nowrap}.muted{color:#b4c4d8}.warning{color:#ffcf88}textarea{box-sizing:border-box;width:100%;min-height:330px}dialog{max-width:600px;background:#19263a;color:#fff;border:1px solid #66758b;border-radius:14px}#notice{min-height:24px}a{color:#9ddbe7}</style></head><body>
-<header><h1>FlightDeck Bid <small> / Demo</small></h1><p>PDK pilot pool · fictional data · browser-local storage</p><p class="warning">Not for operational use. No regulatory compliance validation, shared database, or real authentication.</p><button id="switch">Change interface / demo login</button> <span id="identity"></span></header>
-<dialog id="entry"><h2>How do you want to view the demo?</h2><p>These are simulated roles, not access controls. This chooser appears on every fresh page load.</p><label>Role <select id="role"><option>Employee</option><option>Scheduler</option><option>Department administrator</option></select></label><label>View <select id="view"><option>Calendar</option><option>Staffing grid</option><option>Dashboard</option></select></label><button id="enter">Enter demo</button></dialog>
-<section><h2>Pool overview</h2><div id="summary"></div><p class="muted">Calendar shows requests, not assigned duty. A passing absence check does not prove qualified staffing coverage.</p><label>Month <input id="month" type="month" value="2026-12"></label><div id="schedule"></div></section>
-<section><h2>Request a day</h2><p>Vacation → D/A → PWO/O is category priority. U is not assigned an award tier. This scaffold records requests; it does not run awards.</p><form id="request"><label>Pilot <select id="pilot"></select></label><label>Date <input id="date" type="date" required></label><label>Code <select id="code"></select></label><button>Add pending request</button></form><p id="notice" role="status"></p><div id="requests"></div></section>
-<section><h2>Checks and unresolved policy</h2><button id="check">Run checks</button><ul id="checks"></ul></section>
-<section id="admin"><h2>Department policy editor</h2><p>Edit the preset JSON. Changes persist only in this browser. These controls are available to every demo visitor.</p><textarea id="policy" aria-label="Preset JSON"></textarea><button id="save">Save policy</button><button id="export">Export demo data</button><button id="reset">Reset fictional demo</button></section>
-<script type="module" src="app.js"></script></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FlightDeck Bid — Crew & Trip Scheduling Demo</title>
+  <meta name="description" content="Modular flight-department crew availability, bidding, trip scheduling and accounting record demo. Fictional data, browser-local.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f4f74'/%3E%3Cpath d='M6 18l20-8-6 14-4-5-6 3 2-4z' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip" href="#view">Skip to content</a>
+  <div class="demo-banner" role="note">Demonstration only — fictional data stored in this browser. Not an approved scheduling, compliance or accounting system.</div>
+  <header class="top">
+    <button class="icon-btn nav-toggle" id="navToggle" aria-label="Open navigation" aria-expanded="false">☰</button>
+    <a class="brand" href="#/dashboard" aria-label="FlightDeck Bid home">
+      <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><rect width="32" height="32" rx="7" fill="currentColor"/><path d="M6 18l20-8-6 14-4-5-6 3 2-4z" fill="#fff"/></svg>
+      <span><strong>FlightDeck Bid</strong><small id="deptName"></small></span>
+    </a>
+    <div class="top-meta" id="topMeta"></div>
+    <div class="top-actions">
+      <button class="icon-btn bell" id="bell" aria-label="Notifications"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5.5-6.84V3a1.5 1.5 0 0 0-3 0v1.16A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2Z"/></svg><span class="dot" id="bellCount" hidden></span></button>
+      <button class="btn ghost sm" id="switchUser">Switch user</button>
+    </div>
+  </header>
+  <div class="shell">
+    <nav class="side" id="side" aria-label="Main"></nav>
+    <main id="view" tabindex="-1"></main>
+  </div>
+  <div id="modal" hidden></div>
+  <div id="chooser" hidden></div>
+  <div id="toasts" aria-live="polite"></div>
+  <div id="printArea"></div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

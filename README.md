@@ -1,33 +1,78 @@
 # FlightDeck Bid
 
-Initial, dependency-free browser scaffold for configurable flight-department bidding. Fictional PDK pool of 12 pilots. Not operational software.
+A browser-only demo of a modular crew-availability, bidding and trip-scheduling system for small flight departments — from one aircraft and two pilots up to a 10–50 pilot, 4–20 aircraft Part 91, Part 135 or mixed operation.
 
-## Run
-Serve this directory using any static HTTP server, for example `python -m http.server 8000`, then open localhost:8000. Opening index.html directly via file:// is not supported because the preset is fetched.
+> Demonstration only. All data is fictional and stays in your browser (localStorage). This is not an approved scheduling, regulatory-compliance or accounting system, and the rule encodings are not legal advice.
 
-## Implemented
-- Interface chooser at every fresh page load and on simulated login; employee, scheduler and administrator roles.
-- Calendar, request grid and summary dashboard.
-- Fictional explicit G280/G550 qualifications; no inferred GIV eligibility.
-- Pending requests, manual approval with a counted daily absence cap, removal and local persistence.
-- Editable PDK JSON policy, local reset and JSON export.
-- PDK vacation > D/A > PWO/O priority metadata, cap of five counting VAC/PWO/O, weekly U minimum 1 / target 2 / stretch 3, and unresolved training-buffer preference.
+## Try it
 
-## Important limitations
-This is a scaffold, not a full-featured demo or award solver. Priority tiers are metadata and are not automatically enforced during manual approval. No seniority/lottery awards, staffing solver, duty/rest validation, weekly-U enforcement, training-buffer enforcement, PTO balances, multiple groups UI, shared data, import, backend or real authentication. All demo roles can inspect and edit browser state. Approval only checks the configured absence cap; it does not establish safe coverage. Changes to policy can produce cap violations, which are flagged rather than silently reversing approved requests. Approved request removal is possible with confirmation in this sandbox.
+Open the live demo, choose a role (Administrator / Scheduler, Management, Accounting or a crew member) and a preferred layout (calendar, staffing grid or dashboard). The chooser appears every time you sign in. Four scenarios are included:
 
-## Policy uncertainties
-D/A/PWO/O/U meanings and availability/PTO effects are not assumed. Week definition and training-buffer placement remain unconfirmed. The PDK cap is not a universal departmental rule. Refer to presets/pdk.json.
+| Scenario | What it shows |
+|---|---|
+| Sample mixed fleet | G280, two G550s and an AW139; 14 pilots plus maintenance and dispatch; Part 91 + 135; trips and accounting on |
+| PDK pilot pool preset | 12 pilots, 5-pilot absence cap, VAC → D/A → PWO/O priorities, monthly PWO/O allotments, U-day rules; trips off |
+| Small department | One aircraft, two pilots, Part 91 standby coverage |
+| Blank setup | Empty department with the guided setup wizard |
 
-## Hosting
-Static-host ready. GitHub Pages has not been enabled by this commit. No production employee information or secrets should be added to this public repository.
+Use **Setup & rules → Data** to reset, export or import the whole dataset as JSON.
 
-## Manual smoke checks
-1. Serve over HTTP; confirm chooser appears on reload.
-2. Enter Scheduler; approve five VAC requests for different pilots on one day; sixth must be blocked.
-3. Switch views; requests remain visible.
-4. Reload; data remains local but chooser reappears.
-5. Edit absenceCap below current count; run checks to see violation.
-6. Export and reset; reset must clear local requests.
+## Run locally
 
-These checks are instructions, not a claim of executed browser tests.
+No build step or dependencies.
+
+```
+python -m http.server 8000
+```
+
+Then open http://localhost:8000. Opening `index.html` through `file://` is not supported because the app uses ES modules.
+
+## Features
+
+### Crew availability (always on)
+- 45-day rolling horizon with a configurable near-term lock window; draft → bidding → reviewed → locked → published workflow.
+- Proposed roster generation that respects coverage models (seat-based for pilots, head-count for maintenance, dispatch and other groups), weekly off-day targets, maximum consecutive work days and training buffer days.
+- Multi-type qualifications per person (for example G280 + G550, or fixed wing + helicopter) with no inferred eligibility for types that are not listed.
+- Time-off requests with configurable categories, annual and monthly allotments, mutually exclusive categories in a month, a daily absence cap, immediate rule checks and an approval queue.
+- Bids and swaps: prefer-off, prefer-work and partner swaps (partner must accept). Award methods: seniority, lottery, rotating priority and points, with a side-by-side method comparison and per-person fairness history.
+- Staffing grid, calendar and dashboard layouts; CSV export and print.
+
+### Trip scheduling (optional module)
+- Guided trip builder with multi-leg itineraries, return-leg helper, aircraft or type preference, passengers and hitchhikers, priority and live entry validation.
+- Continuous checking against crew availability; pre-lock suggestions; lock-and-match that proposes the best qualified, current, available crew without new duty or rest violations. Every proposal needs explicit scheduler approval.
+- Disruptions (weather, maintenance, passenger change, crew sick and others) with impact evaluation, automatic accounting flags and a change log.
+- Trip completion with actual times, which freezes the operational record.
+- Passenger directory and trip history.
+
+### Accounting (optional module)
+- A record for every trip; operational fields are read-only, billing and cost fields are editable only by the Accounting role.
+- Invoice status, billing flags, printable invoice, period reports and CSV export.
+
+### Rules, compliance and governance
+- Rule sets per aircraft or operation: Part 135 unscheduled (14 CFR 135.267), Part 135 scheduled (14 CFR 135.265) and a Part 91 department-policy baseline with no Part 91 crew duty limits encoded.
+- Stricter-than-baseline changes are allowed. Relaxing a regulatory baseline requires a written justification, raises a management exception and shows a persistent warning until resolved.
+- Versioned rule history, override logging, exception approvals, notifications and a full audit trail.
+- Reports: fairness, coverage, currency/expiring items and compliance.
+- Admin: department profile, groups, aircraft and downtime, crew (with bulk CSV import), categories, coverage, bidding method and policies.
+
+## Spec mapping
+
+| Spec area | Where it lives |
+|---|---|
+| Phase 1 — crew availability core | Schedule, Time off, Bids & swaps, Setup & rules |
+| Phase 2 — trip module | Trips (builder, suggestions, lock & match, disruptions), Passengers |
+| Phase 3 — accounting | Accounting records and period reports |
+| Cross-cutting — roles, rules, audit | Role chooser, rule sets, Exceptions, Audit trail, Reports |
+
+## Known limits
+
+- Data is stored only in the current browser; there is no backend, sharing or synchronization.
+- Roles are simulated; there is no real authentication or authorization. Anyone using the demo can change everything.
+- Duty and rest rules were transcribed from the eCFR ([14 CFR Part 135 Subpart F](https://www.ecfr.gov/current/title-14/chapter-I/subchapter-G/part-135/subpart-F)) for demonstration. They have not been validated by the FAA, an operator or counsel, and do not cover every provision, exception or operations specification.
+- PDK policy codes (D/A, PWO, O, U) are kept as visible, editable settings rather than assumed meanings.
+- The roster and matching engines are heuristics, not optimizers, and do not guarantee a feasible or fair outcome.
+- Do not enter real employee, passenger or financial information in this public demo.
+
+## Structure
+
+`index.html`, `styles.css`, and `js/` (vanilla ES modules): `store.js` state and permissions, `engine.js` roster/bidding/compliance, `trips.js` trip logic, `rules.js` rule baselines, `presets.js` scenarios, `views/` one module per screen. GitHub Pages deploys via `.github/workflows/pages.yml`.

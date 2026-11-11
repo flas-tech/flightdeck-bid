@@ -21,9 +21,9 @@ jobs:
       - uses: actions/configure-pages@v5
       - name: Prepare public assets
         run: |
-          mkdir -p _site/presets
-          cp index.html app.js _site/
-          cp presets/pdk.json _site/presets/
+          mkdir -p _site
+          cp -r index.html styles.css js _site/
+          touch _site/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
