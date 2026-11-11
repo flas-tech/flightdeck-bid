@@ -25,14 +25,22 @@ export const can = p => !!session.role && PERMS[session.role].includes(p);
 export const tripsOn = () => !!S?.dept.modules.trips;
 
 export function load() {
-  try { const raw = localStorage.getItem(KEY); if (raw) { const s = JSON.parse(raw); if (s && s.schema === 3) { S = s; return true; } } } catch { /* ignore */ }
+  try { const raw = localStorage.getItem(KEY); if (raw) { const s = JSON.parse(raw); if (s && s.schema === 3) { S = migrate(s); return true; } } } catch { /* ignore */ }
   return false;
+}
+// Bring older saved data up to date (line-check observer fields added in spec revision 2).
+export function migrate(s) {
+  s.observations ||= [];
+  s.dept.observer ||= { flightTimeCounts: true };
+  for (const c of s.crew) { c.checkAirman ??= false; c.peerObserver ??= false; }
+  for (const t of s.trips) { t.crew.obs ??= null; t.observer ||= { wanted: !!t.crew.obs, kind: 'any' }; }
+  return s;
 }
 export function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { console.warn('Save failed', e); } listeners.forEach(f => f()); }
 export function onChange(f) { listeners.add(f); }
-export function setState(s) { S = s; }
+export function setState(s) { S = migrate(s); }
 export function loadScenario(name, afterBuild) {
-  S = SCENARIOS[name].build(TODAY);
+  S = migrate(SCENARIOS[name].build(TODAY));
   if (afterBuild) afterBuild(S);
   audit('Loaded scenario', SCENARIOS[name].label, 'System');
   save();

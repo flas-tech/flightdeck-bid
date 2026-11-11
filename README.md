@@ -48,6 +48,13 @@ Then open http://localhost:8000. Opening `index.html` through `file://` is not s
 - A record for every trip; operational fields are read-only, billing and cost fields are editable only by the Accounting role.
 - Invoice status, billing flags, printable invoice, period reports and CSV export.
 
+### Line-check observers
+- Flag crew as Standards Captain / Check Airman or Peer Observer (Setup & rules → Crew, or CSV import).
+- Add an optional observer to any trip (builder step 5 or the trip's crew panel), or to a calendar day on the Line checks page when the Trip module is off.
+- Only flagged crew can be assigned. An observation day counts as a flight work day (work and fairness counters), and the observer is removed from the available pool for coverage, time-off checks, bids and swaps.
+- Lock & match and trip suggestions treat the observer as a hard resource and show the coverage impact. Observer duty is checked against the trip's rule set; counting observed flight time toward limits is a department setting.
+- Adding or removing an observer after lock or publish goes through the disruption workflow and is audited. Accounting records, invoices and CSVs list the observer; Reports → Observer utilization summarizes usage; crew see their own line checks.
+
 ### Rules, compliance and governance
 - Rule sets per aircraft or operation: Part 135 unscheduled (14 CFR 135.267), Part 135 scheduled (14 CFR 135.265) and a Part 91 department-policy baseline with no Part 91 crew duty limits encoded.
 - Stricter-than-baseline changes are allowed. Relaxing a regulatory baseline requires a written justification, raises a management exception and shows a persistent warning until resolved.
@@ -62,6 +69,7 @@ Then open http://localhost:8000. Opening `index.html` through `file://` is not s
 | Phase 1 — crew availability core | Schedule, Time off, Bids & swaps, Setup & rules |
 | Phase 2 — trip module | Trips (builder, suggestions, lock & match, disruptions), Passengers |
 | Phase 3 — accounting | Accounting records and period reports |
+| Line-check observers (all phases) | Line checks, trip crew panel and builder, disruptions, Reports → Observer utilization, Accounting |
 | Cross-cutting — roles, rules, audit | Role chooser, rule sets, Exceptions, Audit trail, Reports |
 
 ## Known limits
@@ -71,6 +79,7 @@ Then open http://localhost:8000. Opening `index.html` through `file://` is not s
 - Duty and rest rules were transcribed from the eCFR ([14 CFR Part 135 Subpart F](https://www.ecfr.gov/current/title-14/chapter-I/subchapter-G/part-135/subpart-F)) for demonstration. They have not been validated by the FAA, an operator or counsel, and do not cover every provision, exception or operations specification.
 - PDK policy codes (D/A, PWO, O, U) are kept as visible, editable settings rather than assumed meanings.
 - The roster and matching engines are heuristics, not optimizers, and do not guarantee a feasible or fair outcome.
+- Which crew are Standards Captains or Peer Observers is an open item for each department; the sample flags are fictional. Whether observer time counts toward flight-time limits depends on the operator and should be confirmed.
 - Do not enter real employee, passenger or financial information in this public demo.
 
 ## Structure

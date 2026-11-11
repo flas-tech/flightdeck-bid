@@ -2,13 +2,13 @@
   --bg: #f4f6f8; --panel: #ffffff; --panel2: #f9fafb; --ink: #17212b; --ink2: #4b5866; --ink3: #6b7785; --line: #dde3e9; --line2: #eef1f4;
   --brand: #1f4f74; --brand2: #2b6a99; --brand-ink: #ffffff; --accent: #c8862a;
   --ok: #1f7a4d; --ok-bg: #e5f4ec; --warn: #9a6200; --warn-bg: #fdf3dc; --bad: #b3261e; --bad-bg: #fbe7e5; --info: #1d5f9a; --info-bg: #e3eef9; --muted-bg: #edf0f3;
-  --W: #1f4f74; --SB: #6b8fb0; --OFF: #e9edf1; --radius: 10px; --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
+  --W: #1f4f74; --SB: #6b8fb0; --OBS: #6a3f8f; --OFF: #e9edf1; --radius: 10px; --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
   --font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #0f1419; --panel: #172029; --panel2: #1c2731; --ink: #e6ebf0; --ink2: #b3bfcb; --ink3: #8e9baa; --line: #2b3946; --line2: #22303c;
     --brand: #4f8fc2; --brand2: #6aa5d4; --ok: #5cc28f; --ok-bg: #173628; --warn: #e3ae4a; --warn-bg: #3a2f14; --bad: #f08a80; --bad-bg: #3d1d1b; --info: #7db6ea; --info-bg: #182d42; --muted-bg: #24313d;
-    --W: #3f7fb3; --SB: #5f7f9c; --OFF: #24313d; --shadow: none; }
+    --W: #3f7fb3; --SB: #5f7f9c; --OBS: #8a5fb3; --OFF: #24313d; --shadow: none; }
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
@@ -123,6 +123,7 @@ textarea { resize: vertical; }
 .cell { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; min-height: 29px; border: 0; background: transparent; font: inherit; font-size: 11px; font-weight: 650; color: var(--ink2); cursor: default; padding: 0; }
 button.cell { cursor: pointer; } button.cell:hover { outline: 2px solid var(--brand2); outline-offset: -2px; }
 .c-W { background: var(--W); color: #fff; } .c-SB { background: var(--SB); color: #fff; } .c-off { background: var(--OFF); color: var(--ink3); }
+.c-OBS { background: var(--OBS); color: #fff; }
 .c-trip { box-shadow: inset 0 -4px 0 var(--accent); }
 .sgrid tr.me td { background: var(--info-bg); }
 .sgrid tr.cov td { height: 26px; font-size: 11px; }

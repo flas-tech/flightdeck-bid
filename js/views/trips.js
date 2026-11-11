@@ -1,7 +1,7 @@
 import { esc, D, T, uid, clone, hrs, round1 } from '../util.js';
 import { S, session, can, save, audit, notify, TODAY, crewById, crewName, acById, paxById, tripById, types, isLocked, lockEnd, pilots } from '../store.js';
-import { tripDates, tripStart, tripEnd, tripType, ruleSetFor, compliance, dutyPeriods, liveTrip } from '../engine.js';
-import { STATUSES, REASONS, DISRUPTIONS, newTrip, validateTrip, candidates, matchTrips, applyMatch, confirmAssignment, publishTrip, routeText, buildSuggestions, applySuggestion, evaluateDisruption, applyDisruption, completeTrip, tripFlight, tripBlock, setStatus, logChange, manifest } from '../trips.js';
+import { tripDates, tripStart, tripEnd, tripType, ruleSetFor, compliance, dutyPeriods, liveTrip, observers, tripCrewIds, OBS_KINDS, observerLabel } from '../engine.js';
+import { STATUSES, REASONS, DISRUPTIONS, newTrip, validateTrip, candidates, matchTrips, applyMatch, confirmAssignment, publishTrip, routeText, buildSuggestions, applySuggestion, evaluateDisruption, applyDisruption, completeTrip, tripFlight, tripBlock, setStatus, logChange, manifest, setTripObserver } from '../trips.js';
 import { $, $$, modal, toast, justify, confirm, checksList, statusBadge, sel, tabs, empty, badge, formData } from '../ui.js';
 import { crewOpts } from './common.js';
 
@@ -25,7 +25,8 @@ export function render(el, param = '') {
   if (ui.tab === 'match') matchTab(box);
   if (ui.tab === 'disruptions') disruptions(box);
 }
-const canSee = t => session.role !== 'crew' || ((t.crew.pic === session.userId || t.crew.sic === session.userId) && ['confirmed', 'published'].includes(t.assign));
+const canSee = t => session.role !== 'crew' || (tripCrewIds(t).includes(session.userId) && (['confirmed', 'published'].includes(t.assign) || t.crew.obs === session.userId));
+const obsBadge = t => t.crew.obs ? badge(`Observer: ${crewName(t.crew.obs)}`, 'info') : t.observer?.wanted ? badge('Observer requested', 'warn') : '';
 
 function list(box) {
   const q = ui.q.toLowerCase();
@@ -34,7 +35,7 @@ function list(box) {
     .sort((a, b) => (tripStart(a) || '9').localeCompare(tripStart(b) || '9'));
   box.innerHTML = `<div class="row" style="margin-bottom:10px">${sel('s', [['active', 'Active (Draft/Tentative/Firm)'], ['all', 'All statuses'], ...STATUSES.map(s => [s, s])], ui.status, 'id="ts" style="width:auto" aria-label="Status"')}<input id="tq" placeholder="Search trip, route, client, passenger" value="${esc(ui.q)}" style="max-width:320px" aria-label="Search trips"></div>
   ${trips.length ? `<div class="card flush"><div class="tbl-wrap"><table><thead><tr><th>Trip</th><th>Start</th><th>Route</th><th>Aircraft</th><th>Pax</th><th>Status</th><th>Flags</th><th>Crew</th></tr></thead><tbody>${trips.map(t => { const v = validateTrip(t).filter(x => x.level === 'block' || x.level === 'warn');
-    return `<tr><td><a href="#/trips/${t.id}"><strong>${esc(t.number)}</strong></a>${t.priority !== 'Normal' ? ` ${badge(t.priority, 'warn')}` : ''}</td><td>${esc(T.short(tripStart(t)))}</td><td>${esc(routeText(t))}</td><td>${esc(acById(t.tail)?.tail || (t.aircraftPref ? t.aircraftPref + ' (pref)' : '—'))}</td><td>${t.paxCount}</td><td>${statusBadge(t.status)}</td><td>${t.flexible ? badge('Flexible', 'info') : badge('Firm time', 'muted')} ${t.hitchAllowed ? badge('Hitchhikers OK') : ''} ${v.length ? badge(`${v.length} check${v.length > 1 ? 's' : ''}`, v.some(x => x.level === 'block') ? 'bad' : 'warn') : ''}</td><td>${t.assign === 'unassigned' ? badge('Unassigned', 'muted') : `${esc(crewName(t.crew.pic))} / ${esc(crewName(t.crew.sic))} ${statusBadge(t.assign)}`}</td></tr>`; }).join('')}</tbody></table></div></div>` : empty('No trips match.')}`;
+    return `<tr><td><a href="#/trips/${t.id}"><strong>${esc(t.number)}</strong></a>${t.priority !== 'Normal' ? ` ${badge(t.priority, 'warn')}` : ''}</td><td>${esc(T.short(tripStart(t)))}</td><td>${esc(routeText(t))}</td><td>${esc(acById(t.tail)?.tail || (t.aircraftPref ? t.aircraftPref + ' (pref)' : '—'))}</td><td>${t.paxCount}</td><td>${statusBadge(t.status)}</td><td>${t.flexible ? badge('Flexible', 'info') : badge('Firm time', 'muted')} ${t.hitchAllowed ? badge('Hitchhikers OK') : ''} ${v.length ? badge(`${v.length} check${v.length > 1 ? 's' : ''}`, v.some(x => x.level === 'block') ? 'bad' : 'warn') : ''}</td><td>${t.assign === 'unassigned' ? badge('Unassigned', 'muted') : `${esc(crewName(t.crew.pic))} / ${esc(crewName(t.crew.sic))} ${statusBadge(t.assign)}`} ${obsBadge(t)}</td></tr>`; }).join('')}</tbody></table></div></div>` : empty('No trips match.')}`;
   $('#ts', box).onchange = e => { ui.status = e.target.value; list(box); };
   $('#tq', box).oninput = e => { ui.q = e.target.value; const pos = e.target.selectionStart; list(box); const n = $('#tq', box); n.focus(); n.setSelectionRange(pos, pos); };
 }
@@ -65,8 +66,14 @@ function builder(el, existing) {
         <button class="btn sm" data-a="newpax" style="margin-top:8px">Add new passenger</button></section>
       <section class="step"><h3><span class="step-n">4</span>Aircraft</h3><div class="form-grid"><label class="field"><span>Preferred type</span>${sel('aircraftPref', [['', '—'], ...types()], t.aircraftPref)}</label>
         <label class="field"><span>Assigned tail</span>${sel('tail', [['', 'Not yet assigned'], ...S.aircraft.filter(a => a.status !== 'inactive').map(a => [a.id, `${a.tail} — ${a.type}, ${a.seats} seats, Part ${a.part}${a.status === 'mx' ? ' (MX)' : ''}`])], t.tail)}</label></div></section>
-      <section class="step"><h3><span class="step-n">5</span>Requirements and notes</h3><label class="field"><span>Special requirements</span><input name="special" value="${esc(t.special)}"></label><label class="field"><span>Notes</span><textarea name="notes" rows="2">${esc(t.notes)}</textarea></label></section>
-      <section class="step"><h3><span class="step-n">6</span>Billing (optional, Accounting can edit later)</h3><div class="form-grid"><label class="field"><span>Client</span><input name="b_client" value="${esc(t.billing.client)}" list="clients"></label><label class="field"><span>Cost center</span><input name="b_costCenter" value="${esc(t.billing.costCenter)}"></label><label class="field"><span>Billing code</span><input name="b_code" value="${esc(t.billing.code)}"></label></div><datalist id="clients">${[...new Set(S.passengers.map(p => p.company).concat(S.trips.map(x => x.billing.client)).filter(Boolean))].map(c => `<option value="${esc(c)}">`).join('')}</datalist></section>
+      <section class="step"><h3><span class="step-n">5</span>Line-check observer (optional)</h3>
+        <p class="muted" style="margin-top:0">A third crew member — Standards Captain / Check Airman or Peer Observer. The observer occupies a resource (removed from the coverage pool) and the observation counts as a flight work day.</p>
+        <div class="row"><label class="check"><input type="checkbox" name="obsWanted" ${t.observer?.wanted || t.crew.obs ? 'checked' : ''} ${locked ? 'disabled' : ''}> Observer on this trip</label></div>
+        <div class="form-grid"><label class="field"><span>Observer type</span>${sel('obsKind', Object.entries(OBS_KINDS), t.observer?.kind || 'any')}</label>
+        <label class="field"><span>Observer</span><select name="obsId" ${locked ? 'disabled' : ''}><option value="">Propose at lock</option>${obsOptions(t)}</select></label></div>
+        ${observers().length ? '' : '<small class="muted">No crew are flagged as Standards Captain or Peer Observer yet — set the flags in Setup & rules → Crew.</small>'}</section>
+      <section class="step"><h3><span class="step-n">6</span>Requirements and notes</h3><label class="field"><span>Special requirements</span><input name="special" value="${esc(t.special)}"></label><label class="field"><span>Notes</span><textarea name="notes" rows="2">${esc(t.notes)}</textarea></label></section>
+      <section class="step"><h3><span class="step-n">7</span>Billing (optional, Accounting can edit later)</h3><div class="form-grid"><label class="field"><span>Client</span><input name="b_client" value="${esc(t.billing.client)}" list="clients"></label><label class="field"><span>Cost center</span><input name="b_costCenter" value="${esc(t.billing.costCenter)}"></label><label class="field"><span>Billing code</span><input name="b_code" value="${esc(t.billing.code)}"></label></div><datalist id="clients">${[...new Set(S.passengers.map(p => p.company).concat(S.trips.map(x => x.billing.client)).filter(Boolean))].map(c => `<option value="${esc(c)}">`).join('')}</datalist></section>
     </div><aside class="card" style="position:sticky;top:96px"><h2>Entry validation</h2><div id="val"></div></aside></div>`;
     if (window.innerWidth < 900) $('#bgrid', el).style.gridTemplateColumns = '1fr';
     bind();
@@ -76,13 +83,14 @@ function builder(el, existing) {
     for (const k of ['status', 'priority', 'part', 'aircraftPref', 'tail', 'special', 'notes']) if (k in f) t[k] = f[k];
     t.ruleSetId = f.ruleSetId || null; t.flexible = f.flexible; t.flexHours = Number(f.flexHours) || 0; t.hitchAllowed = f.hitchAllowed; t.paxCount = Number(f.paxCount) || 0;
     t.billing.client = f.b_client; t.billing.costCenter = f.b_costCenter; t.billing.code = f.b_code;
+    if (!locked) { t.observer = { wanted: !!f.obsWanted || !!f.obsId, kind: f.obsKind || 'any' }; t.crew.obs = f.obsWanted || f.obsId ? (f.obsId || null) : null; }
     $$('[data-leg]', el).forEach(tr => { const l = t.legs[Number(tr.dataset.leg)]; $$('[data-f]', tr).forEach(i => { l[i.dataset.f] = i.dataset.f === 'pax' ? Number(i.value) || 0 : i.dataset.f === 'from' || i.dataset.f === 'to' ? i.value.toUpperCase().trim() : i.value; }); });
     t.paxIds = $$('[data-pax]', el).filter(i => i.checked).map(i => i.dataset.pax).concat(t.paxIds.filter(id => !$(`[data-pax="${id}"]`, el)));
   };
   const val = () => { read(); $('#val', el).innerHTML = checksList(validateTrip(t)); };
   function bind() {
     const form = $('#bform', el); form.oninput = e => { if (e.target.id === 'pq') { read(); pq = e.target.value; draw(); const n = $('#pq', el); n.focus(); n.setSelectionRange(pq.length, pq.length); return; } val(); };
-    form.onchange = val; val();
+    form.onchange = e => { if (['obsKind', 'obsWanted'].includes(e.target.name)) { read(); draw(); return; } val(); }; val();
     el.onclick = async e => {
       const rm = e.target.closest('[data-rm]'); if (rm) { read(); t.legs.splice(Number(rm.dataset.rm), 1); draw(); return; }
       const a = e.target.closest('[data-a]')?.dataset.a; if (!a) return;
@@ -96,10 +104,11 @@ function builder(el, existing) {
         if (existing) {
           const orig = tripById(t.id); const statusChanged = orig.status !== t.status;
           if (statusChanged) setStatus(orig, t.status, 'Edited by scheduler');
-          const keep = { history: orig.history, changes: orig.changes, crew: orig.crew, assign: orig.assign, billing: { ...orig.billing, client: t.billing.client, costCenter: t.billing.costCenter, code: t.billing.code } };
-          Object.assign(orig, t, keep); audit('Trip edited', `${orig.number} ${routeText(orig)}`);
+          const newObs = t.crew.obs; const keep = { history: orig.history, changes: orig.changes, crew: orig.crew, assign: orig.assign, billing: { ...orig.billing, client: t.billing.client, costCenter: t.billing.costCenter, code: t.billing.code } };
+          Object.assign(orig, t, keep); if ((orig.crew.obs || null) !== (newObs || null)) setTripObserver(orig, newObs, 'Operational'); audit('Trip edited', `${orig.number} ${routeText(orig)}`);
         } else {
           S.tripSeq++; t.history = [{ status: t.status, at: new Date().toISOString(), by: 'Scheduler (demo)', note: 'Created' }]; S.trips.push(t); audit('Trip created', `${t.number} ${t.status} ${routeText(t)}`);
+          if (t.crew.obs) { const o = t.crew.obs; t.crew.obs = null; setTripObserver(t, o, 'Operational'); }
           if (t.status !== 'Draft' && tripDates(t).some(isLocked)) { S.disruptions.unshift({ id: uid('ds'), type: 'popup', tripId: t.id, reason: 'Client request', detail: 'Pop-up trip inside the locked window', status: 'open', at: new Date().toISOString() }); notify('role:admin', `Pop-up trip ${t.number} entered inside the locked window`, '#/trips/disruptions'); toast('Pop-up inside locked window — disruption opened'); }
         }
         ui.draft = null; location.hash = `#/trips/${t.id}`; save();
@@ -107,6 +116,10 @@ function builder(el, existing) {
     };
   }
   draw();
+}
+
+function obsOptions(t) {
+  return candidates({ ...t, crew: { ...t.crew } }, 'OBS', { exclude: [] }).map(x => `<option value="${x.c.id}" ${x.c.id === t.crew.obs ? 'selected' : ''}>${x.ok ? '✓' : '✕'} ${esc(x.c.name)} — ${esc(observerLabel(x.c))}${x.ok ? (x.offDays ? `, uses ${x.offDays} off day(s)` : '') : ': ' + esc(x.why[0])}</option>`).join('');
 }
 
 export async function paxForm(p = null) {
@@ -122,7 +135,7 @@ export async function paxForm(p = null) {
 // ---------------------------------------------------------------- detail
 function detail(el, t) {
   const edit = can('trips.edit') && !t.frozen; const ac = acById(t.tail); const rs = ruleSetFor(t); const v = validateTrip(t); const mf = manifest(t);
-  const crewIds = [t.crew.pic, t.crew.sic].filter(Boolean);
+  const crewIds = tripCrewIds(t);
   const comp = crewIds.flatMap(id => compliance(id).filter(x => x.trips.includes(t.number)));
   const postLock = t.assign === 'published' || tripDates(t).some(isLocked);
   el.innerHTML = `<div class="page-head"><div><a href="#/trips" class="muted">← Trips</a><h1>${esc(t.number)} · ${esc(routeText(t))}</h1><p>${statusBadge(t.status)} ${statusBadge(t.assign)} ${t.frozen ? badge('Operational record frozen', 'info') : ''} ${t.billingFlag ? badge('Billing impact flagged', 'bad') : ''} · ${esc(rs?.name || '')}</p></div>
@@ -136,7 +149,7 @@ function detail(el, t) {
     <div class="card"><h2>Crew</h2><div id="crewbox"></div></div></div>
   <div class="grid g2">
     <div class="card"><h2>Manifest (${t.paxCount} pax)</h2>${mf.length ? `<table><thead><tr><th>Name</th><th>Company</th><th>Role</th><th>Notes</th></tr></thead><tbody>${mf.map(p => `<tr><td>${esc(p.name)}</td><td>${esc(p.company)}</td><td>${esc(p.role)}</td><td><small>${esc(p.notes)}</small></td></tr>`).join('')}</tbody></table>` : '<p class="muted">No named passengers selected.</p>'}${t.paxCount > mf.length ? `<p class="muted">${t.paxCount - mf.length} unnamed passenger(s).</p>` : ''}</div>
-    <div class="card"><h2>Duty / rest for this trip</h2>${crewIds.length ? crewIds.map(id => { const ds = dutyPeriods(id).filter(d => d.trips.includes(t.number)); return `<p><strong>${esc(crewName(id))}</strong></p>${ds.map(d => `<p class="mono">${esc(T.short(d.start))} → ${esc(T.short(d.end))} · duty ${hrs(d.dutyHrs)} h / max ${d.rs.params.maxDuty} · flight ${hrs(d.flightHrs)} h / max ${d.minCrew >= 2 ? d.rs.params.flightPerDuty2p : d.rs.params.flightPerDuty1p}</p>`).join('')}`; }).join('') + (comp.length ? checksList(comp.map(c => ({ level: c.severity === 'violation' ? 'block' : 'warn', text: `${crewName(c.crewId)}: ${c.detail} — ${c.basis}` }))) : checksList([{ level: 'ok', text: 'No duty/rest flags under the configured rule set' }])) : '<p class="muted">Assign crew to evaluate duty and rest.</p>'}</div></div>
+    <div class="card"><h2>Duty / rest for this trip</h2>${crewIds.length ? crewIds.map(id => { const ds = dutyPeriods(id).filter(d => d.trips.includes(t.number)); return `<p><strong>${esc(crewName(id))}</strong>${id === t.crew.obs ? ' <small class="muted">(observer — same rule set)</small>' : ''}</p>${ds.map(d => `<p class="mono">${esc(T.short(d.start))} → ${esc(T.short(d.end))} · duty ${hrs(d.dutyHrs)} h / max ${d.rs.params.maxDuty} · flight ${hrs(d.flightHrs)} h / max ${d.minCrew >= 2 ? d.rs.params.flightPerDuty2p : d.rs.params.flightPerDuty1p}</p>`).join('')}`; }).join('') + (comp.length ? checksList(comp.map(c => ({ level: c.severity === 'violation' ? 'block' : 'warn', text: `${crewName(c.crewId)}: ${c.detail} — ${c.basis}` }))) : checksList([{ level: 'ok', text: 'No duty/rest flags under the configured rule set' }])) : '<p class="muted">Assign crew to evaluate duty and rest.</p>'}</div></div>
   <div class="grid g2">
     <div class="card"><h2>Status history</h2><ul class="notice-list">${t.history.map(h => `<li>${statusBadge(h.status)} ${esc(T.stamp(h.at))} · ${esc(h.by)}${h.note ? ` — ${esc(h.note)}` : ''}</li>`).join('')}</ul></div>
     <div class="card"><h2>Change log</h2>${t.changes.length ? `<ul class="notice-list">${t.changes.map(c => `<li><strong>${esc(c.type)}</strong> (${esc(c.reason)}) ${esc(c.detail)} <small>${esc(T.stamp(c.at))} · ${esc(c.by)}${c.postLock ? ' · post-lock' : ''}${c.billingImpact ? ' · billing impact' : ''}</small></li>`).join('')}</ul>` : '<p class="muted">No changes recorded.</p>'}</div></div>`;
@@ -154,11 +167,13 @@ function crewPanel(box, t) {
   const edit = can('trips.edit') && !t.frozen && liveTrip(t); const ac = acById(t.tail); const seats = ac && ac.minCrew < 2 ? ['PIC'] : ['PIC', 'SIC'];
   box.innerHTML = `${seats.map(seat => { const key = seat.toLowerCase(); const cands = edit ? candidates(t, seat, { exclude: [seat === 'PIC' ? t.crew.sic : t.crew.pic].filter(Boolean) }) : [];
     return `<div class="field"><span>${seat}</span>${edit ? `<select data-seat="${key}"><option value="">— unassigned —</option>${cands.map(x => `<option value="${x.c.id}" ${x.c.id === t.crew[key] ? 'selected' : ''}>${x.ok ? '✓' : '✕'} ${esc(x.c.name)} — ${x.ok ? `${x.tripDays} trip days${x.standby ? ', standby' : ''}` : esc(x.why[0])}</option>`).join('')}</select>` : `<strong>${esc(crewName(t.crew[key]))}</strong>`}</div>`; }).join('')}
+    ${obsField(t, edit)}
     <p>Assignment: ${statusBadge(t.assign)}</p>
     ${edit ? `<div class="row"><button class="btn sm" data-c="best">Propose best match</button>${t.assign === 'proposed' ? '<button class="btn sm primary" data-c="confirm">Confirm crew</button>' : ''}${t.assign === 'confirmed' ? '<button class="btn sm primary" data-c="publish">Publish to crew</button>' : ''}</div><p class="muted" style="margin-top:8px">✓ = qualified, current, rostered available, no overlap and no new duty/rest violation. Choosing a ✕ option is an override and is logged.</p>` : ''}`;
   if (!edit) return;
   box.onchange = async e => {
     const s = e.target.closest('[data-seat]'); if (!s) return; const key = s.dataset.seat; const id = s.value || null;
+    if (key === 'obs') return observerChange(box, t, id);
     const cand = candidates(t, key.toUpperCase()).find(x => x.c.id === id);
     let why = '';
     if (id && cand && !cand.ok) { why = await justify('Assign with override', `${crewName(id)} is not eligible: ${cand.why.join('; ')}.`); if (!why) { crewPanel(box, t); return; } }
@@ -170,10 +185,25 @@ function crewPanel(box, t) {
   };
   box.onclick = e => {
     const c = e.target.closest('[data-c]')?.dataset.c; if (!c) return;
-    if (c === 'best') { for (const seat of seats) { const key = seat.toLowerCase(); const best = candidates(t, seat, { exclude: [seat === 'PIC' ? t.crew.sic : t.crew.pic].filter(Boolean) }).find(x => x.ok); t.crew[key] = best?.c.id || null; } t.assign = t.crew.pic || t.crew.sic ? 'proposed' : 'unassigned'; audit('Crew proposed', `${t.number}: ${crewName(t.crew.pic)} / ${crewName(t.crew.sic)}`); save(); toast(t.crew.pic ? 'Best match proposed' : 'No eligible PIC found', t.crew.pic ? 'ok' : 'bad'); }
+    if (c === 'best') { for (const seat of (t.observer?.wanted && !t.crew.obs ? [...seats, 'OBS'] : seats)) { if (seat === 'OBS') { const b = candidates(t, 'OBS').find(x => x.ok); if (b) setTripObserver(t, b.c.id, 'Operational'); continue; } const key = seat.toLowerCase(); const best = candidates(t, seat, { exclude: [seat === 'PIC' ? t.crew.sic : t.crew.pic].filter(Boolean) }).find(x => x.ok); t.crew[key] = best?.c.id || null; } t.assign = t.crew.pic || t.crew.sic ? 'proposed' : 'unassigned'; audit('Crew proposed', `${t.number}: ${crewName(t.crew.pic)} / ${crewName(t.crew.sic)}`); save(); toast(t.crew.pic ? 'Best match proposed' : 'No eligible PIC found', t.crew.pic ? 'ok' : 'bad'); }
     if (c === 'confirm') { confirmAssignment(t); save(); toast('Crew confirmed'); }
     if (c === 'publish') { publishTrip(t); audit('Trip published', t.number); save(); toast('Published and crew notified'); }
   };
+}
+
+function obsField(t, edit) {
+  if (!edit) return t.crew.obs || t.observer?.wanted ? `<div class="field"><span>Line-check observer</span><strong>${t.crew.obs ? `${esc(crewName(t.crew.obs))} <small class="muted">${esc(observerLabel(crewById(t.crew.obs)))}</small>` : 'Requested — not yet assigned'}</strong></div>` : '';
+  const postLock = t.assign === 'published' || tripDates(t).some(isLocked);
+  return `<div class="field"><span>Line-check observer <small class="muted">(${esc(OBS_KINDS[t.observer?.kind || 'any'])})</small></span><select data-seat="obs"><option value="">— none —</option>${obsOptions(t)}</select>${postLock ? '<small class="muted">Post-lock: changing the observer opens the disruption workflow.</small>' : '<small class="muted">Observer is removed from the coverage pool; the day counts as a work day.</small>'}</div>`;
+}
+async function observerChange(box, t, id) {
+  const postLock = t.assign === 'published' || tripDates(t).some(isLocked);
+  if (postLock) { crewPanel(box, t); return disruptionForm({ tripId: t.id, type: 'observer', obsAction: id ? 'add' : 'remove', crewId: id || '' }); }
+  const cand = id ? candidates({ ...t, crew: { ...t.crew, obs: null } }, 'OBS').find(x => x.c.id === id) : null; let why = '';
+  if (id && cand && !cand.ok) { why = await justify('Assign observer with override', `${crewName(id)} is not eligible: ${cand.why.join('; ')}.`); if (!why) { crewPanel(box, t); return; } }
+  setTripObserver(t, id, 'Operational');
+  if (why) { audit('Observer assignment override', `${t.number}: ${crewName(id)}`, null, why); S.exceptions.unshift({ id: uid('ex'), kind: 'assignment-override', detail: `${t.number} Observer ${crewName(id)}: ${cand.why.join('; ')}`, justification: why, by: 'Scheduler (demo)', at: new Date().toISOString(), status: 'pending' }); }
+  save(); toast(id ? 'Observer assigned' : 'Observer removed');
 }
 
 async function completeFlow(t) {
@@ -188,7 +218,7 @@ function suggestions(box) {
   const open = buildSuggestions();
   const done = (S.suggestions || []).filter(s => s.status !== 'open').slice(0, 12);
   box.innerHTML = `<div class="row" style="justify-content:space-between;margin-bottom:10px"><p class="muted" style="margin:0">Background optimization reran just now against current trips, roster, time off and aircraft status. ${open.length} open suggestion(s).</p><button class="btn sm" data-s="rerun">Re-run</button></div>
-  ${open.length ? `<div class="list">${open.map(s => `<div class="item"><div class="item-head"><div>${badge(s.kind, s.kind.includes('warning') ? 'bad' : 'info')} <strong>${esc(s.text)}</strong></div><div class="row">${s.action ? `<button class="btn sm primary" data-s="apply" data-k="${esc(s.key)}">Approve</button>` : ''}<button class="btn sm ghost" data-s="dismiss" data-k="${esc(s.key)}">Dismiss</button></div></div><p class="muted" style="margin:6px 0 0">${esc(s.detail)}</p>${s.tripIds.length ? `<small>${s.tripIds.map(id => `<a href="#/trips/${id}">${esc(tripById(id)?.number)}</a>`).join(' · ')}</small>` : ''}</div>`).join('')}</div>` : empty('No suggestions right now.')}
+  ${open.length ? `<div class="list">${open.map(s => `<div class="item"><div class="item-head"><div>${badge(s.kind, s.kind.includes('warning') ? 'bad' : 'info')} <strong>${esc(s.text)}</strong></div><div class="row">${s.action ? `<button class="btn sm primary" data-s="apply" data-k="${esc(s.key)}">Approve</button>` : ''}<button class="btn sm ghost" data-s="dismiss" data-k="${esc(s.key)}">Dismiss</button></div></div><p class="muted" style="margin:6px 0 0">${esc(s.detail)}</p>${s.obsImpact ? `<small class="muted">Observer resource impact: ${esc(s.obsImpact)}</small><br>` : ''}${s.tripIds.length ? `<small>${s.tripIds.map(id => `<a href="#/trips/${id}">${esc(tripById(id)?.number)}</a>`).join(' · ')}</small>` : ''}</div>`).join('')}</div>` : empty('No suggestions right now.')}
   ${done.length ? `<h3 style="margin-top:16px">Recently decided</h3><ul class="notice-list">${done.map(s => `<li>${statusBadge(s.status === 'applied' ? 'approved' : 'cancelled')} ${esc(s.kind)}: ${esc(s.text)}</li>`).join('')}</ul>` : ''}`;
   box.onclick = async e => {
     const b = e.target.closest('[data-s]'); if (!b) return; const s = S.suggestions.find(x => x.key === b.dataset.k);
@@ -202,7 +232,7 @@ function suggestions(box) {
 function matchTab(box) {
   const end = lockEnd(); const win = S.trips.filter(t => ['Tentative', 'Firm'].includes(t.status) && tripDates(t).some(d => d >= TODAY && d <= end)).sort((a, b) => tripStart(a).localeCompare(tripStart(b)));
   box.innerHTML = `<div class="card"><p>Lock window: <strong>${esc(D.label(TODAY))} – ${esc(D.label(end))}</strong> (${S.roster.lockedThrough ? `locked through ${esc(D.label(S.roster.lockedThrough))}` : 'not yet locked'}). Locking from Schedule runs matching automatically; you can also preview it here.</p><div class="row"><button class="btn primary" data-m="run">Propose matches for window</button><a class="btn" href="#/schedule">Go to lock / publish</a></div></div><div id="mres"></div>
-  <div class="card flush"><div class="tbl-wrap"><table><thead><tr><th>Trip</th><th>Start</th><th>Type</th><th>PIC</th><th>SIC</th><th>State</th><th></th></tr></thead><tbody>${win.map(t => `<tr><td><a href="#/trips/${t.id}">${esc(t.number)}</a></td><td>${esc(T.short(tripStart(t)))}</td><td>${esc(tripType(t))}</td><td>${esc(crewName(t.crew.pic))}</td><td>${esc(crewName(t.crew.sic))}</td><td>${statusBadge(t.assign)}</td><td>${t.assign === 'proposed' ? `<button class="btn sm" data-m="confirm" data-id="${t.id}">Confirm</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">No trips in the window.</td></tr>'}</tbody></table></div></div>
+  <div class="card flush"><div class="tbl-wrap"><table><thead><tr><th>Trip</th><th>Start</th><th>Type</th><th>PIC</th><th>SIC</th><th>Observer</th><th>State</th><th></th></tr></thead><tbody>${win.map(t => `<tr><td><a href="#/trips/${t.id}">${esc(t.number)}</a></td><td>${esc(T.short(tripStart(t)))}</td><td>${esc(tripType(t))}</td><td>${esc(crewName(t.crew.pic))}</td><td>${esc(crewName(t.crew.sic))}</td><td>${t.crew.obs ? esc(crewName(t.crew.obs)) : t.observer?.wanted ? badge('requested', 'warn') : '—'}</td><td>${statusBadge(t.assign)}</td><td>${t.assign === 'proposed' ? `<button class="btn sm" data-m="confirm" data-id="${t.id}">Confirm</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">No trips in the window.</td></tr>'}</tbody></table></div></div>
   ${win.some(t => t.assign === 'proposed') ? '<button class="btn" data-m="confirmall">Confirm all proposed</button>' : ''}`;
   box.onclick = async e => {
     const b = e.target.closest('[data-m]'); if (!b) return;
@@ -234,11 +264,12 @@ export async function disruptionForm(pre) {
     if (type === 'wx') return `<label class="field"><span>From leg</span>${sel('legId', legOpts, legOpts[0]?.[0])}</label><label class="field"><span>Delay (hours)</span><input type="number" step="0.5" name="delayHrs" value="2"></label>`;
     if (type === 'pax') return `<label class="field"><span>New passenger count</span><input type="number" name="paxCount" value="${t?.paxCount || 0}"></label>`;
     if (type === 'mx') return `<label class="field"><span>Aircraft</span>${sel('aircraftId', S.aircraft.map(a => [a.id, `${a.tail} (${a.type})`]), t?.tail || S.aircraft[0]?.id)}</label><div class="form-grid"><label class="field"><span>Down from</span><input type="date" name="start" value="${TODAY}"></label><label class="field"><span>Through</span><input type="date" name="end" value="${D.add(TODAY, 1)}"></label></div>`;
-    if (type === 'crew') return `<label class="field"><span>Crew member</span><select name="crewId">${crewOpts(pilots(), t?.crew.pic)}</select></label><div class="form-grid"><label class="field"><span>Unavailable from</span><input type="date" name="start" value="${TODAY}"></label><label class="field"><span>Through</span><input type="date" name="end" value="${D.add(TODAY, 1)}"></label></div>`;
+    if (type === 'observer') return `<div class="form-grid"><label class="field"><span>Action</span>${sel('obsAction', [['add', t?.crew.obs ? 'Replace observer' : 'Add observer'], ['remove', 'Remove observer']], d.obsAction || (t?.crew.obs ? 'remove' : 'add'))}</label><label class="field"><span>Observer (for add / replace)</span><select name="crewId"><option value="">—</option>${t ? obsOptions(t) : crewOpts(observers(), d.crewId)}</select></label></div><small class="muted">Current: ${t?.crew.obs ? esc(crewName(t.crew.obs)) : 'none'}. Coverage and duty/rest are re-evaluated with the observer as a hard resource.</small>`;
+    if (type === 'crew') return `<label class="field"><span>Crew member</span><select name="crewId">${crewOpts([...new Set([...pilots(), ...observers()])], t?.crew.pic)}</select></label><div class="form-grid"><label class="field"><span>Unavailable from</span><input type="date" name="start" value="${TODAY}"></label><label class="field"><span>Through</span><input type="date" name="end" value="${D.add(TODAY, 1)}"></label></div>`;
     return '';
   };
   const needsTrip = type => !['mx', 'crew'].includes(type);
-  const draw = card => { const f = formData(card); const type = f.type || d.type; const t = tripById(f.tripId || d.tripId); $('#tripF', card).hidden = !needsTrip(type); $('#dyn', card).innerHTML = fields(type, t); };
+  const draw = card => { const f = formData(card); const type = f.type || d.type; const t = tripById(f.tripId || d.tripId); $('#tripF', card).hidden = !needsTrip(type); $('#dyn', card).innerHTML = fields(type, t); if (type === 'observer' && d.crewId) { const s = $('[name=crewId]', card); if (s) s.value = d.crewId; } };
   const res = await modal('Record change / disruption', `<div class="form-grid"><label class="field"><span>Type</span>${sel('type', Object.entries(DISRUPTIONS).filter(([k]) => k !== 'popup'), d.type, 'id="dtype"')}</label><label class="field" id="tripF"><span>Trip</span>${sel('tripId', live.map(t => [t.id, `${t.number} ${routeText(t)} ${T.short(tripStart(t))}`]), d.tripId, 'id="dtrip"')}</label><label class="field"><span>Reason code</span>${sel('reason', REASONS, d.reason)}</label></div><div id="dyn"></div><label class="field"><span>Detail</span><input name="detail"></label>`, {
     wide: true, onOpen: card => { draw(card); $('#dtype', card).onchange = () => draw(card); $('#dtrip', card).onchange = () => draw(card); },
     actions: [{ label: 'Cancel', value: null, kind: 'ghost' }, { label: 'Evaluate impact', kind: 'primary', collect: c => formData(c) }],
@@ -250,7 +281,7 @@ export async function disruptionForm(pre) {
 }
 
 async function evaluateFlow(d) {
-  if (!d.tripId && d.type === 'crew') { const hit = S.trips.find(x => liveTrip(x) && (x.crew.pic === d.crewId || x.crew.sic === d.crewId) && tripDates(x).some(dd => dd >= d.start && dd <= d.end)); d.tripId = hit?.id || null; }
+  if (!d.tripId && d.type === 'crew') { const hit = S.trips.find(x => liveTrip(x) && tripCrewIds(x).includes(d.crewId) && tripDates(x).some(dd => dd >= d.start && dd <= d.end)); d.tripId = hit?.id || null; }
   const imp = evaluateDisruption(d); d.impact = imp;
   const res = await modal(`Impact — ${DISRUPTIONS[d.type]}`, `<h3>Impact</h3><ul>${imp.items.map(i => `<li>${esc(i)}</li>`).join('') || '<li>No direct impact found</li>'}</ul>
     ${imp.violations.length ? `<div class="alert bad">Duty/rest after change:<ul>${imp.violations.map(v => `<li>${esc(v.name)}: ${esc(v.detail)} — ${esc(v.basis)}</li>`).join('')}</ul></div>` : ''}

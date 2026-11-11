@@ -3,7 +3,31 @@ import { D, T, clone, sum, round1, shuffle, stdev, by } from './util.js';
 import { S, TODAY, crewById, acById, catByCode, activeCrew, horizon, isLocked, audit, notify, crewName } from './store.js';
 import { requiredRest, citeFor } from './rules.js';
 
-export const isWork = code => code === 'W' || code === 'SB';
+// OBS = line-check observation day: counts as a flight work day, but the observer is not available for coverage.
+export const isWork = code => code === 'W' || code === 'SB' || code === 'OBS';
+export const OBS = 'OBS';
+
+// ------------------------------------------------------------------ line-check observers
+export const OBS_KINDS = { any: 'Standards Captain or Peer Observer', standards: 'Standards Captain / Check Airman only', peer: 'Peer Observer' };
+export function canObserve(c, kind = 'any') {
+  if (!c || c.status !== 'active') return false;
+  if (kind === 'standards') return !!c.checkAirman;
+  if (kind === 'peer') return !!(c.peerObserver || c.checkAirman);
+  return !!(c.checkAirman || c.peerObserver);
+}
+export const observerLabel = c => c?.checkAirman ? 'Standards Captain / Check Airman' : c?.peerObserver ? 'Peer Observer' : '';
+export const observers = () => activeCrew().filter(c => canObserve(c));
+export const tripCrewIds = t => [t.crew?.pic, t.crew?.sic, t.crew?.obs].filter(Boolean);
+export function seatOf(t, id) { return t.crew.pic === id ? 'pic' : t.crew.sic === id ? 'sic' : t.crew.obs === id ? 'obs' : null; }
+// All observer resource uses on a date: calendar-day assignments plus trip observers (when the Trip module is on).
+export function observationsOn(date, { trips = S.trips, obs = S.observations || [] } = {}) {
+  const out = [];
+  for (const o of obs) if (o.status !== 'cancelled' && o.start <= date && o.end >= date) out.push({ crewId: o.crewId, kind: o.kind, obsId: o.id, tripId: null, observed: o.observedIds || [], note: o.note });
+  if (S.dept.modules.trips) for (const t of trips) if (t.crew?.obs && ['Tentative', 'Firm', 'Completed'].includes(t.status) && tripDates(t).includes(date)) out.push({ crewId: t.crew.obs, kind: t.observer?.kind || 'any', obsId: null, tripId: t.id, number: t.number, observed: [t.crew.pic, t.crew.sic].filter(Boolean) });
+  return out;
+}
+export function observerOn(crewId, date, opts) { return observationsOn(date, opts).find(o => o.crewId === crewId) || null; }
+
 const offCode = () => S.dept.offCode;
 
 // ------------------------------------------------------------------ leave helpers
@@ -91,6 +115,7 @@ export function coverage(date, { cells = S.roster.cells, reqs = S.requests, remo
   const row = cells[date];
   const avail = c => {
     if (c.status !== 'active' || remove.includes(c.id)) return false;
+    if (observerOn(c.id, date)) return false; // observers occupy a resource and leave the available pool
     if (leaveOnly || !row) return !leaveOn(c.id, date, reqs);
     return isWork(row[c.id]);
   };
@@ -104,7 +129,7 @@ export function coverage(date, { cells = S.roster.cells, reqs = S.requests, remo
     res.groups.push({ group: g.name, need: Number(g.minOnDuty) || 0, have });
   }
   res.ok = !res.short.length && res.groups.every(g => g.have >= g.need);
-  res.available = pil.length;
+  res.available = pil.length; res.observers = observationsOn(date).length;
   return res;
 }
 export function shortText(cov) {
@@ -146,7 +171,7 @@ export function canWork(cells, c, date, { weeklyMin = S.dept.weeklyOff.min } = {
 }
 export function bidOn(crewId, date, type) { return S.bids.find(b => b.crewId === crewId && b.date === date && b.type === type && ['open', 'honored'].includes(b.status)); }
 export function tripAssignedOn(crewId, date) {
-  return S.trips.find(t => liveTrip(t) && t.assign !== 'unassigned' && (t.crew.pic === crewId || t.crew.sic === crewId) && tripDates(t).includes(date));
+  return S.trips.find(t => liveTrip(t) && ((t.assign !== 'unassigned' && (t.crew.pic === crewId || t.crew.sic === crewId)) || t.crew.obs === crewId) && tripDates(t).includes(date));
 }
 
 // ------------------------------------------------------------------ roster generation
@@ -165,7 +190,7 @@ export function generateRoster({ from = TODAY, days = S.dept.horizonDays } = {})
     const td = tripDates(t).filter(d => dset.has(d)); const type = tripType(t); if (!type) continue;
     const seats = (acById(t.tail)?.minCrew ?? 2) >= 2 ? ['PIC', 'SIC'] : ['PIC']; const used = [];
     for (const seat of seats) {
-      const pick = crew.filter(c => !used.includes(c.id) && qualifies(c, type, seat, td[0]) && td.every(d => !leaveOn(c.id, d) && !held(c.id).has(d)) && !(c.contract && S.dept.contractLast))
+      const pick = crew.filter(c => !used.includes(c.id) && qualifies(c, type, seat, td[0]) && td.every(d => !leaveOn(c.id, d) && !observerOn(c.id, d) && !held(c.id).has(d)) && !(c.contract && S.dept.contractLast))
         .sort((a, b) => held(a.id).size - held(b.id).size || (seat === 'SIC' ? (a.quals.some(q => q.type === type && q.seat === 'PIC') ? 1 : 0) - (b.quals.some(q => q.type === type && q.seat === 'PIC') ? 1 : 0) : 0) || a.seniority - b.seniority)[0];
       if (pick) { used.push(pick.id); const h = held(pick.id); td.forEach(d => h.add(d)); resv.set(pick.id, h); }
     }
@@ -173,7 +198,7 @@ export function generateRoster({ from = TODAY, days = S.dept.horizonDays } = {})
   const onTrip = (id, d) => tripAssignedOn(id, d) || held(id).has(d);
   dates.forEach((date, idx) => {
     const row = {}; cells[date] = row;
-    for (const c of crew) { const l = leaveOn(c.id, date); if (l) row[c.id] = l.code; }
+    for (const c of crew) { const l = leaveOn(c.id, date); if (l) row[c.id] = l.code; else if (observerOn(c.id, date)) row[c.id] = OBS; }
     const weekend = D.isWeekend(date), holiday = hol.has(date);
     const cost = c => {
       const s = st[c.id]; const expected = (c.targetDays / 30) * (idx + 1);
@@ -234,16 +259,17 @@ export function setCell(date, crewId, code) { if (!S.roster.cells[date]) S.roste
 
 // ------------------------------------------------------------------ fairness & stats
 export function crewStats(c, dates = horizon()) {
-  const hol = new Set(S.dept.holidays); let work = 0, sb = 0, off = 0, leave = 0, wk = 0, hd = 0, streak = 0, maxStreak = 0, tripDays = 0;
+  const hol = new Set(S.dept.holidays); let work = 0, sb = 0, obs = 0, off = 0, leave = 0, wk = 0, hd = 0, streak = 0, maxStreak = 0, tripDays = 0;
   for (const d of dates) {
     const code = rosterCode(c.id, d);
-    if (isWork(code)) { if (code === 'W') work++; else sb++; if (D.isWeekend(d)) wk++; if (hol.has(d)) hd++; streak++; maxStreak = Math.max(maxStreak, streak); }
+    const ob = !isWork(code) && observerOn(c.id, d); // observation outside a generated roster still counts
+    if (isWork(code) || ob) { if (code === 'SB') sb++; else work++; if (code === OBS || ob) obs++; if (D.isWeekend(d)) wk++; if (hol.has(d)) hd++; streak++; maxStreak = Math.max(maxStreak, streak); }
     else { streak = 0; if (code === offCode()) off++; else if (code) leave++; }
     if (tripAssignedOn(c.id, d)) tripDays++;
   }
   const target = Math.round((c.targetDays / 30) * dates.length);
   const bids = S.bids.filter(b => b.crewId === c.id);
-  return { work, sb, off, leave, wk, hd, maxStreak, tripDays, target, delta: work + sb - target, bidsHonored: bids.filter(b => b.status === 'honored').length, bidsTotal: bids.length };
+  return { work, sb, obs, off, leave, wk, hd, maxStreak, tripDays, target, delta: work + sb - target, bidsHonored: bids.filter(b => b.status === 'honored').length, bidsTotal: bids.length };
 }
 export function fairnessSummary(group = 'Pilots') {
   const crew = activeCrew().filter(c => c.group === group); const rows = crew.map(c => ({ c, ...crewStats(c) }));
@@ -320,6 +346,11 @@ export function checkRequest(r, reqs = S.requests) {
   // trip conflicts
   const tc = [...new Set(dates.map(d => tripAssignedOn(c.id, d)).filter(Boolean))];
   for (const t of tc) out.push({ level: 'warn', text: `Assigned to trip ${t.number}; approval opens a crew-unavailability disruption` });
+  // observer assignments
+  const obsDays = dates.filter(d => observerOn(c.id, d));
+  if (obsDays.length && cat.unavailable) out.push({ level: 'block', text: `Scheduled as line-check observer on ${obsDays.map(d => D.label(d)).join(', ')} — the scheduler must remove or reassign the observer first` });
+  const oc = dates.filter(d => d >= TODAY).map(d => [d, observationsOn(d).length]).filter(x => x[1]);
+  if (oc.length && cat.unavailable) out.push({ level: 'info', text: `Coverage check already excludes ${oc.reduce((a, x) => a + x[1], 0)} observer-day(s) on these dates` });
   // overlap
   if (reqs.some(x => x.id !== r.id && x.crewId === c.id && ['approved', 'pending'].includes(x.status) && x.start <= r.end && x.end >= r.start)) out.push({ level: 'warn', text: 'Overlaps another request from this person' });
   return out;
@@ -385,6 +416,7 @@ function evaluateBid(b, cells) {
   if (!cells[b.date]) return { outcome: 'denied', reason: 'No roster generated for this date yet', changes };
   const cur = cells[b.date][c.id];
   if (b.type === 'off') {
+    if (observerOn(c.id, b.date)) return { outcome: 'denied', reason: 'Scheduled as line-check observer on this date (observer changes go through the scheduler)', changes };
     if (!isWork(cur)) return { outcome: 'honored', reason: cur === offCode() ? `Already a ${cur} day` : `Already off (${cur})`, changes };
     if (tripAssignedOn(c.id, b.date)) return { outcome: 'denied', reason: 'Assigned to a trip on this date', changes };
     cells[b.date][c.id] = offCode();
@@ -403,7 +435,7 @@ function evaluateBid(b, cells) {
     return { outcome: 'denied', reason: `Would leave coverage short: ${shortText(cov) || 'no qualified backfill'}`, changes };
   }
   if (b.type === 'work') {
-    if (isWork(cur)) return { outcome: 'honored', reason: 'Already scheduled to work', changes };
+    if (isWork(cur)) return { outcome: 'honored', reason: cur === OBS ? 'Already working as line-check observer' : 'Already scheduled to work', changes };
     if (cur !== offCode()) return { outcome: 'denied', reason: `On leave (${cur})`, changes };
     const ok = canWork(cells, c, b.date); if (!ok.ok) return { outcome: 'denied', reason: `Hard rule: ${ok.why}`, changes };
     cells[b.date][c.id] = 'W'; changes.push({ date: b.date, crewId: c.id, from: cur, to: 'W' }); return { outcome: 'honored', reason: 'Added as work day', changes };
@@ -413,6 +445,8 @@ function evaluateBid(b, cells) {
     const give = b.date, take = b.takeDate;
     if (!cells[take]) return { outcome: 'denied', reason: 'Take date not in roster', changes };
     const a1 = cells[give][c.id], p1 = cells[give][p.id], a2 = cells[take][c.id], p2 = cells[take][p.id];
+    const ob = [[c, give], [p, give], [c, take], [p, take]].find(([x, d]) => observerOn(x.id, d));
+    if (ob) return { outcome: 'denied', reason: `${ob[0].name} is a line-check observer on ${D.label(ob[1])}; observer days cannot be swapped`, changes };
     if (!isWork(a1) || p1 !== offCode()) return { outcome: 'denied', reason: `${c.name} must work and ${p.name} must be off on ${D.label(give)}`, changes };
     if (!isWork(p2) || a2 !== offCode()) return { outcome: 'denied', reason: `${p.name} must work and ${c.name} must be off on ${D.label(take)}`, changes };
     cells[give][c.id] = offCode(); cells[give][p.id] = a1; cells[take][p.id] = offCode(); cells[take][c.id] = p2;
@@ -453,10 +487,15 @@ export function ruleSetFor(t) {
   let part = S.dept.mode === 'mixed' ? (t.part && t.part !== 'aircraft' ? t.part : (ac?.part || '91')) : S.dept.mode;
   return S.ruleSets.find(r => r.id === S.dept.defaultRuleSet[part]) || S.ruleSets[0];
 }
-function legHours(l) { return Number(l.flightAct) || Math.max(0, T.hours(l.dep, l.arr)); }
+function legHours(l) { if (l.obs && S.dept.observer?.flightTimeCounts === false) return 0; return Number(l.flightAct) || Math.max(0, T.hours(l.dep, l.arr)); }
 function crewLegs(crewId, trips) {
   const out = [];
-  for (const t of trips) if (liveTrip(t) && t.assign !== 'unassigned' && (t.crew.pic === crewId || t.crew.sic === crewId)) for (const l of t.legs) out.push({ ...l, dep: l.depAct || l.dep, arr: l.arrAct || l.arr, trip: t, rs: ruleSetFor(t), minCrew: acById(t.tail)?.minCrew || 2 });
+  for (const t of trips) {
+    if (!liveTrip(t)) continue;
+    const flying = t.assign !== 'unassigned' && (t.crew.pic === crewId || t.crew.sic === crewId);
+    const obs = t.crew.obs === crewId; // observer duty is evaluated against the same rule set as the trip
+    if (flying || obs) for (const l of t.legs) out.push({ ...l, dep: l.depAct || l.dep, arr: l.arrAct || l.arr, trip: t, rs: ruleSetFor(t), minCrew: acById(t.tail)?.minCrew || 2, obs: obs && !flying });
+  }
   return out.sort((a, b) => a.dep.localeCompare(b.dep));
 }
 export function dutyPeriods(crewId, trips = S.trips) {
@@ -508,7 +547,7 @@ export function compliance(crewId, trips = S.trips) {
 }
 export function allCompliance() {
   const out = [];
-  for (const c of activeCrew().filter(c => c.group === 'Pilots')) out.push(...compliance(c.id));
+  for (const c of activeCrew().filter(c => c.group === 'Pilots' || canObserve(c))) out.push(...compliance(c.id));
   for (const c of activeCrew()) for (const cur of c.currency || []) {
     const days = D.diff(TODAY, cur.expires);
     if (days < 0) out.push({ crewId: c.id, severity: 'violation', rule: 'Currency expired', basis: 'Currency tracking', detail: `${cur.label} expired ${D.label(cur.expires)}${cur.type ? ` — not eligible for ${cur.type}` : ' — not eligible for duty'}`, trips: [], date: cur.expires });

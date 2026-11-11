@@ -84,6 +84,7 @@ function calendar(box) {
     let chips = '';
     if (me) { const code = rosterCode(me.id, d); const s = codeStyle(code); chips += code ? `<span class="chip ${s.cls}" style="${s.style}">Me: ${esc(codeLabel(code))}</span>` : ''; const t = tripAssignedOn(me.id, d); if (t) chips += `<span class="chip trip">${esc(t.number)} ${esc(routeText(t))}</span>`; }
     if (rostered) chips += `<span class="chip ${cv.ok ? 'light' : 'bad'}">${cv.ok ? `${working} on · ${sb} SB` : `Short ${esc(shortText(cv))}`}</span>`;
+    if (cv.observers?.length || (cv.observers > 0)) { const n = Array.isArray(cv.observers) ? cv.observers.length : cv.observers; chips += `<span class="chip c-OBS" title="Line-check observer(s) — not in the coverage pool">${n} OBS</span>`; }
     if (!me) chips += trips.slice(0, 2).map(t => `<span class="chip trip" title="${esc(t.number)}">${esc(t.number)} ${esc(routeText(t))}</span>`).join('') + (trips.length > 2 ? `<span class="chip light">+${trips.length - 2} trips</span>` : '');
     chips += leave.slice(0, 3).map(([c, x]) => { const s = codeStyle(x); return `<span class="chip ${s.cls}" style="${s.style}">${esc(x)} ${esc(c.name.split(' ').slice(-1)[0])}</span>`; }).join('') + (leave.length > 3 ? `<span class="chip light">+${leave.length - 3} off</span>` : '');
     const st = S.roster.status[d];
@@ -108,7 +109,7 @@ function dayDetail(d) {
 
 async function editCell(date, crewId) {
   const c = crewById(crewId); const cur = rosterCode(crewId, date); const locked = isLocked(date); const trip = tripAssignedOn(crewId, date);
-  const codes = [['W', 'W — work / available'], ['SB', 'SB — standby'], [S.dept.offCode, `${S.dept.offCode} — day off`], ...S.categories.map(x => [x.code, `${x.code} — ${x.name}`])];
+  const codes = [['W', 'W — work / available'], ['SB', 'SB — standby'], ['OBS', 'OBS — line-check observer'], [S.dept.offCode, `${S.dept.offCode} — day off`], ...S.categories.map(x => [x.code, `${x.code} — ${x.name}`])];
   const res = await modal(`${c.name} · ${D.long(date)}`, `<p>Current: <strong>${esc(codeLabel(cur))}</strong>${trip ? ` · assigned to ${esc(trip.number)}` : ''}</p>
     ${locked ? '<div class="alert warn">This date is inside the locked window. Changes are logged overrides and raised for management review.</div>' : ''}
     <label class="field"><span>New code</span>${sel('code', codes, cur, 'id="newCode"')}</label><div id="impact"></div>

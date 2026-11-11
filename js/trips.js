@@ -1,10 +1,12 @@
 // Trip scheduling module: validation, pre-lock suggestions, lock-time crew matching, disruptions and close-out.
 import { D, T, clone, uid, sum, round1 } from './util.js';
-import { S, TODAY, acById, crewById, crewName, pilots, audit, notify, paxById, tripById, lockEnd, isLocked, actorName } from './store.js';
-import { tripDates, tripStart, tripEnd, tripType, aircraftDown, qualifies, rosterCode, isWork, leaveOn, compliance, liveTrip, coverage, shortText, crewStats, setCell } from './engine.js';
+import { S, TODAY, acById, crewById, crewName, pilots, activeCrew, audit, notify, paxById, tripById, lockEnd, isLocked, actorName } from './store.js';
+import { tripDates, tripStart, tripEnd, tripType, aircraftDown, qualifies, rosterCode, isWork, leaveOn, compliance, liveTrip, coverage, shortText, crewStats, setCell, canObserve, observerOn, observationsOn, tripCrewIds, seatOf, OBS_KINDS, OBS } from './engine.js';
 
 export const STATUSES = ['Draft', 'Tentative', 'Firm', 'Cancelled', 'Completed'];
 export const REASONS = ['Client request', 'Weather', 'Maintenance', 'Crew unavailable', 'ATC / airport', 'Passenger change', 'Operational', 'Billing correction', 'Other'];
+export const SEAT_KEY = { PIC: 'pic', SIC: 'sic', OBS: 'obs' };
+export const SEAT_NAME = { pic: 'PIC', sic: 'SIC', obs: 'Observer' };
 const overlaps = (a, b) => { const as = tripStart(a), ae = tripEnd(a), bs = tripStart(b), be = tripEnd(b); return as && bs && as < be && bs < ae; };
 
 export function newTrip() {
@@ -12,7 +14,7 @@ export function newTrip() {
     id: uid('tr'), number: `T-${S.tripSeq++}`, status: 'Draft', part: 'aircraft', ruleSetId: null, legs: [], paxIds: [], hitchhikers: [], paxCount: 0,
     flexible: false, flexHours: 0, hitchAllowed: false, aircraftPref: '', tail: '', special: '', priority: 'Normal', notes: '',
     billing: { client: '', costCenter: '', code: '', invoiceStatus: 'Not invoiced', invoiceNo: '', costs: { fuel: 0, landing: 0, catering: 0, crew: 0, other: 0 }, notes: '' },
-    crew: { pic: null, sic: null }, assign: 'unassigned', history: [], changes: [], billingFlag: false, frozen: false, created: new Date().toISOString(),
+    crew: { pic: null, sic: null, obs: null }, observer: { wanted: false, kind: 'any' }, assign: 'unassigned', history: [], changes: [], billingFlag: false, frozen: false, created: new Date().toISOString(),
   };
 }
 export function tailConflicts(t, trips = S.trips) { return t.tail ? trips.filter(x => x.id !== t.id && x.tail === t.tail && ['Tentative', 'Firm'].includes(x.status) && overlaps(t, x)) : []; }
@@ -38,6 +40,17 @@ export function validateTrip(t) {
     const dn = tailDown(t); if (dn) out.push({ level: 'warn', text: dn });
     for (const x of tailConflicts(t)) out.push({ level: t.status === 'Firm' && x.status === 'Firm' ? 'block' : 'warn', text: `${ac.tail} also on ${x.number} (${x.status}) at overlapping times` });
   }
+  const ob = t.crew?.obs ? crewById(t.crew.obs) : null;
+  if (ob) {
+    const kind = t.observer?.kind || 'any';
+    if (!canObserve(ob, kind)) out.push({ level: 'block', text: `${ob.name} is not flagged as ${kind === 'standards' ? 'a Standards Captain / Check Airman' : 'a Standards Captain or Peer Observer'}` });
+    if (ob.id === t.crew.pic || ob.id === t.crew.sic) out.push({ level: 'block', text: `${ob.name} cannot observe a trip they are crewing` });
+    const dl = tripDates(t).find(d => leaveOn(ob.id, d)); if (dl) out.push({ level: 'block', text: `Observer ${ob.name} is on approved leave ${D.label(dl)}` });
+    const other = S.trips.find(x => x.id !== t.id && liveTrip(x) && tripCrewIds(x).includes(ob.id) && overlaps(t, x)); if (other) out.push({ level: 'block', text: `Observer ${ob.name} is also on ${other.number} at overlapping times` });
+    const dayObs = tripDates(t).map(d => (S.observations || []).find(o => o.status !== 'cancelled' && o.crewId === ob.id && o.start <= d && o.end >= d)).find(Boolean); if (dayObs) out.push({ level: 'warn', text: `Observer ${ob.name} also has a calendar-day observation ${D.label(dayObs.start)}` });
+    const short = tripDates(t).filter(d => d >= TODAY).map(d => coverage(d, { leaveOnly: !S.roster.cells[d] })).filter(c => !c.ok);
+    out.push(short.length ? { level: 'warn', text: `With ${ob.name} observing, coverage is short on ${short.map(c => `${D.label(c.date)} (${shortText(c)})`).join('; ')}` } : { level: 'ok', text: `Observer ${ob.name} qualified; coverage still met with the observer removed from the pool` });
+  } else if (t.observer?.wanted) out.push({ level: 'info', text: `Line-check observer requested (${OBS_KINDS[t.observer.kind || 'any']}) — proposed at lock or pick one now` });
   if (t.paxIds.length > (Number(t.paxCount) || 0)) out.push({ level: 'warn', text: `${t.paxIds.length} passengers selected but passenger count is ${t.paxCount}` });
   if (t.hitchhikers.length && !t.hitchAllowed) out.push({ level: 'warn', text: 'Hitchhikers listed but trip is specified-passengers-only' });
   if (t.flexible && !(Number(t.flexHours) > 0)) out.push({ level: 'info', text: 'Flexible trip has no flex window; suggestions will try ±24 h' });
@@ -54,25 +67,34 @@ export function setStatus(t, status, note = '') {
 
 // ------------------------------------------------------------------ candidate crew for a seat
 export function candidates(t, seat, { trips = S.trips, exclude = [] } = {}) {
-  const type = tripType(t); const dates = tripDates(t); const out = [];
-  for (const c of pilots()) {
+  const type = tripType(t); const dates = tripDates(t); const out = []; const isObs = seat === 'OBS'; const kind = t.observer?.kind || 'any';
+  const pool = isObs ? activeCrew().filter(c => c.checkAirman || c.peerObserver) : pilots();
+  const others = tripCrewIds(t).filter(id => id !== t.crew[SEAT_KEY[seat]]);
+  for (const c of pool) {
     const why = [];
     if (exclude.includes(c.id)) continue;
-    if (!dates.every(d => qualifies(c, type, seat, d))) { why.push(`not ${type} ${seat} qualified/current`); }
+    if (isObs) { if (!canObserve(c, kind)) why.push(kind === 'standards' ? 'not a Standards Captain / Check Airman' : 'not an observer'); if (others.includes(c.id)) why.push('crewing this trip'); }
+    else if (!dates.every(d => qualifies(c, type, seat, d))) { why.push(`not ${type} ${seat} qualified/current`); }
+    if (!isObs && t.crew.obs === c.id) why.push('assigned as observer on this trip');
     const codes = dates.map(d => rosterCode(c.id, d));
+    const offOk = x => isObs && x === S.dept.offCode; // an observer can be scheduled on an off day (it becomes a work day)
     if (dates.some(d => leaveOn(c.id, d))) why.push('on leave');
-    else if (codes.some(x => x && !isWork(x))) why.push(`roster shows ${codes.filter(x => x && !isWork(x)).join('/')} on trip dates`);
-    const busy = trips.find(x => x.id !== t.id && liveTrip(x) && x.assign !== 'unassigned' && (x.crew.pic === c.id || x.crew.sic === c.id) && overlaps(t, x));
-    if (busy) why.push(`already on ${busy.number}`);
+    else if (codes.some(x => x && !isWork(x) && !offOk(x))) why.push(`roster shows ${codes.filter(x => x && !isWork(x)).join('/')} on trip dates`);
+    const busy = trips.find(x => x.id !== t.id && liveTrip(x) && ((x.assign !== 'unassigned' && (x.crew.pic === c.id || x.crew.sic === c.id)) || x.crew.obs === c.id) && overlaps(t, x));
+    if (busy) why.push(`already on ${busy.number}${busy.crew.obs === c.id ? ' as observer' : ''}`);
+    const dayObs = dates.find(d => (S.observations || []).some(o => o.status !== 'cancelled' && o.crewId === c.id && o.start <= d && o.end >= d));
+    if (dayObs) why.push(`line-check observer ${D.label(dayObs)}`);
     let viol = [];
     if (!why.length) {
-      const tmp = trips.map(x => x.id === t.id ? { ...x, crew: { ...x.crew, [seat === 'PIC' ? 'pic' : 'sic']: c.id }, assign: x.assign === 'unassigned' ? 'proposed' : x.assign } : x);
+      const tmp = trips.map(x => x.id === t.id ? { ...x, crew: { ...x.crew, [SEAT_KEY[seat]]: c.id }, assign: x.assign === 'unassigned' ? 'proposed' : x.assign } : x);
       const before = new Set(compliance(c.id, trips).filter(v => v.severity === 'violation').map(v => v.rule + v.detail));
       viol = compliance(c.id, tmp).filter(v => v.severity === 'violation' && !before.has(v.rule + v.detail));
       if (viol.length) why.push(`duty/rest: ${viol.map(v => v.detail).join('; ')}`);
     }
-    const tripDays = new Set(trips.filter(x => x.id !== t.id && liveTrip(x) && x.assign !== 'unassigned' && (x.crew.pic === c.id || x.crew.sic === c.id)).flatMap(tripDates).filter(d => d >= TODAY)).size;
-    out.push({ c, ok: !why.length, why, standby: codes.includes('SB'), tripDays, score: tripDays * 10 + (codes.includes('SB') ? 2 : 0) + (c.contract && S.dept.contractLast ? 100 : 0) + (S.dept.seniorityTieBreaker ? c.seniority * 0.01 : 0) });
+    const tripDays = new Set(trips.filter(x => x.id !== t.id && liveTrip(x) && tripCrewIds(x).includes(c.id)).flatMap(tripDates).filter(d => d >= TODAY)).size;
+    const offDays = isObs ? codes.filter(x => x === S.dept.offCode).length : 0;
+    // observers: prefer someone already rostered to work (no off day consumed) and, for 'any', peer observers before check airmen
+    out.push({ c, ok: !why.length, why, standby: codes.includes('SB'), tripDays, offDays, score: tripDays * 10 + offDays * 4 + (isObs && kind !== 'standards' && c.checkAirman && !c.peerObserver ? 1 : 0) + (codes.includes('SB') ? 2 : 0) + (c.contract && S.dept.contractLast ? 100 : 0) + (S.dept.seniorityTieBreaker ? c.seniority * 0.01 : 0) });
   }
   return out.sort((a, b) => (b.ok - a.ok) || a.score - b.score);
 }
@@ -83,14 +105,16 @@ export function matchTrips({ through = lockEnd() } = {}) {
   const todo = trips.filter(t => ['Tentative', 'Firm'].includes(t.status) && t.assign !== 'published' && t.assign !== 'confirmed' && tripDates(t).some(d => d >= TODAY && d <= through)).sort((a, b) => tripStart(a).localeCompare(tripStart(b)));
   for (const t of todo) {
     const ac = acById(t.tail); const seats = ac ? (ac.minCrew >= 2 ? ['PIC', 'SIC'] : ['PIC']) : ['PIC', 'SIC'];
+    if (t.observer?.wanted || t.crew.obs) seats.push('OBS');
     const r = { tripId: t.id, number: t.number, picks: {}, notes: [] };
     if (!ac) r.notes.push('No aircraft assigned — matched against preferred type');
     for (const seat of seats) {
-      const key = seat === 'PIC' ? 'pic' : 'sic';
-      const cands = candidates(t, seat, { trips, exclude: [t.crew.pic, t.crew.sic].filter((x, i) => x && (i === 0 ? key !== 'pic' : key !== 'sic')) });
+      const key = SEAT_KEY[seat];
+      if (seat === 'OBS' && t.crew.obs) { r.picks.obs = t.crew.obs; r.notes.push(`Observer: ${crewName(t.crew.obs)} — pre-assigned by scheduler; resource held`); continue; }
+      const cands = candidates(t, seat, { trips, exclude: Object.entries(t.crew).filter(([k, v]) => v && k !== key).map(([, v]) => v) });
       const best = cands.find(x => x.ok);
-      if (best) { t.crew[key] = best.c.id; r.picks[key] = best.c.id; r.notes.push(`${seat}: ${best.c.name} — qualified, available, fewest trip days (${best.tripDays})${best.standby ? ', from standby' : ''}`); }
-      else { t.crew[key] = null; r.picks[key] = null; r.notes.push(`${seat}: unfilled — ${cands.slice(0, 2).map(x => `${x.c.name}: ${x.why[0]}`).join('; ') || 'no pilots'}`); }
+      if (best) { t.crew[key] = best.c.id; r.picks[key] = best.c.id; r.notes.push(seat === 'OBS' ? `Observer: ${best.c.name} (${best.c.checkAirman ? 'Standards Captain' : 'Peer Observer'}) — available${best.offDays ? `, uses ${best.offDays} off day(s)` : ''}; removed from coverage pool` : `${seat}: ${best.c.name} — qualified, available, fewest trip days (${best.tripDays})${best.standby ? ', from standby' : ''}`); }
+      else { t.crew[key] = null; r.picks[key] = null; r.notes.push(`${SEAT_NAME[key]}: unfilled — ${cands.slice(0, 2).map(x => `${x.c.name}: ${x.why[0]}`).join('; ') || (seat === 'OBS' ? 'no qualified observers' : 'no pilots')}`); }
     }
     t.assign = 'proposed';
     results.push(r);
@@ -100,25 +124,49 @@ export function matchTrips({ through = lockEnd() } = {}) {
 export function applyMatch(m) {
   for (const r of m.results) {
     const t = tripById(r.tripId); if (!t) continue;
-    t.crew.pic = r.picks.pic ?? t.crew.pic; t.crew.sic = r.picks.sic ?? t.crew.sic; t.assign = 'proposed';
+    t.crew.pic = r.picks.pic ?? t.crew.pic; t.crew.sic = r.picks.sic ?? t.crew.sic; if ('obs' in r.picks) t.crew.obs = r.picks.obs ?? t.crew.obs; t.assign = 'proposed';
   }
   audit('Lock matching proposed', `${m.results.length} trip(s) matched; awaiting scheduler confirmation`);
 }
 export function confirmAssignment(t) {
   t.assign = 'confirmed';
   for (const id of [t.crew.pic, t.crew.sic].filter(Boolean)) for (const d of tripDates(t)) { if (S.roster.cells[d] && rosterCode(id, d) !== 'W') setCell(d, id, 'W'); }
-  audit('Trip crew confirmed', `${t.number}: PIC ${crewName(t.crew.pic)}, SIC ${crewName(t.crew.sic)}`);
+  if (t.crew.obs) syncObsCells(t.crew.obs, tripDates(t), true);
+  audit('Trip crew confirmed', `${t.number}: PIC ${crewName(t.crew.pic)}, SIC ${crewName(t.crew.sic)}${t.crew.obs ? `, Observer ${crewName(t.crew.obs)}` : ''}`);
 }
 export function publishTrip(t) {
   t.assign = 'published';
   for (const id of [t.crew.pic, t.crew.sic].filter(Boolean)) notify(id, `Assigned to ${t.number} ${routeText(t)} on ${D.label(T.date(tripStart(t)))}`, `#/trips/${t.id}`);
+  if (t.crew.obs) notify(t.crew.obs, `Line-check observer on ${t.number} ${routeText(t)} on ${D.label(T.date(tripStart(t)))} — counts as a flight work day`, `#/trips/${t.id}`);
+}
+// Keep roster cells in step with observer assignments (OBS on add, back to the off code on removal).
+export function syncObsCells(crewId, dates, on) {
+  for (const d of dates) { if (!S.roster.cells[d]) continue; const cur = rosterCode(crewId, d);
+    if (on && !leaveOn(crewId, d)) setCell(d, crewId, OBS);
+    else if (!on && cur === OBS && !observerOn(crewId, d)) setCell(d, crewId, S.dept.offCode); }
+}
+export function setTripObserver(t, crewId, reason = 'Operational', viaDisruption = false) {
+  const old = t.crew.obs; if (old === crewId) return;
+  t.crew.obs = crewId || null; if (crewId) t.observer = { ...(t.observer || { kind: 'any' }), wanted: true };
+  if (old) syncObsCells(old, tripDates(t), false);
+  if (crewId && (t.assign !== 'unassigned' || S.roster.cells[tripDates(t)[0]])) syncObsCells(crewId, tripDates(t), true);
+  logChange(t, crewId ? (old ? 'Observer changed' : 'Observer added') : 'Observer removed', reason, `Line-check observer ${crewName(old)} → ${crewName(crewId)}`, true);
+  if (old) notify(old, `Removed as observer on ${t.number}`, `#/trips/${t.id}`);
+  if (crewId) notify(crewId, `Assigned as line-check observer on ${t.number} ${routeText(t)} (${D.label(T.date(tripStart(t)))}) — counts as a work day`, `#/trips/${t.id}`);
+  if (!viaDisruption) audit(crewId ? 'Observer assigned' : 'Observer removed', `${t.number}: ${crewName(old)} → ${crewName(crewId)}`);
 }
 export const routeText = t => t.legs.length ? [t.legs[0].from, ...t.legs.map(l => l.to)].join('–') : 'no legs';
 
 // ------------------------------------------------------------------ pre-lock suggestions
 export function buildSuggestions() {
   const prev = Object.fromEntries((S.suggestions || []).map(s => [s.key, s.status]));
-  const out = []; const add = s => { if (prev[s.key] === 'dismissed' || prev[s.key] === 'applied') return; out.push({ status: 'open', ...s }); };
+  const out = []; const add = s => {
+    if (prev[s.key] === 'dismissed' || prev[s.key] === 'applied') return;
+    const ds = [...new Set(s.tripIds.flatMap(id => tripDates(tripById(id) || { legs: [] })))].filter(d => d >= TODAY);
+    const n = ds.reduce((a, d) => a + observationsOn(d).length, 0);
+    s.obsImpact = ds.length ? (n ? `${n} observer-day(s) on these dates are already removed from the available pool` : 'No observers scheduled on these dates') : '';
+    out.push({ status: 'open', ...s });
+  };
   const live = S.trips.filter(t => ['Tentative', 'Firm', 'Draft'].includes(t.status) && tripEnd(t) && T.date(tripEnd(t)) >= TODAY && t.assign !== 'published');
   const freeTail = (t, type) => S.aircraft.filter(a => a.type === type && a.id !== t.tail && !tripDates(t).some(d => aircraftDown(a, d)) && !tailConflicts({ ...t, tail: a.id }).length);
   for (const t of live) {
@@ -147,6 +195,13 @@ export function buildSuggestions() {
         }
       }
     }
+    // observer placement: requested but not yet assigned
+    if (t.observer?.wanted && !t.crew.obs && t.status !== 'Draft') {
+      const best = candidates(t, 'OBS').find(x => x.ok);
+      if (best) { const after = tripDates(t).filter(d => d >= TODAY).map(d => coverage(d, { remove: [best.c.id], leaveOnly: !S.roster.cells[d] })).filter(c => !c.ok);
+        add({ key: `obs:${t.id}:${best.c.id}`, kind: 'Observer placement', tripIds: [t.id], text: `${t.number} requests a line-check observer`, detail: `Assign ${best.c.name} (${best.c.checkAirman ? 'Standards Captain' : 'Peer Observer'})${best.offDays ? `, using ${best.offDays} off day(s)` : ''}. ${after.length ? `Coverage would be short on ${after.map(c => `${D.label(c.date)} (${shortText(c)})`).join('; ')}.` : 'Coverage still met with the observer removed from the pool.'}`, action: { type: 'setObs', tripId: t.id, crewId: best.c.id } }); }
+      else add({ key: `obsnone:${t.id}`, kind: 'Observer placement', tripIds: [t.id], text: `${t.number} requests an observer but none is available`, detail: 'No flagged Standards Captain or Peer Observer is free and compliant for the whole trip.', action: null });
+    }
     // hitchhiker opportunities on empty legs
     if (t.hitchAllowed) for (const l of t.legs.filter(l => !(Number(l.pax) > 0))) {
       const cand = live.find(x => x.id !== t.id && ['Draft', 'Tentative'].includes(x.status) && x.legs.length === 1 && x.legs[0].from === l.from && x.legs[0].to === l.to && Math.abs(T.hours(x.legs[0].dep, l.dep)) <= Math.max(24, Number(x.flexHours) || 0));
@@ -169,11 +224,11 @@ export function buildSuggestions() {
   const days = [...new Set(live.filter(t => t.status !== 'Draft').flatMap(tripDates))].filter(d => d >= TODAY && d <= D.add(TODAY, S.dept.horizonDays - 1)).sort();
   for (const d of days) { const c = coverage(d, { leaveOnly: !S.roster.cells[d] }); if (!c.ok) add({ key: `cov:${d}:${shortText(c)}`, kind: 'Coverage warning', tripIds: [], text: `${D.long(d)}: short ${shortText(c)} with trips scheduled`, detail: 'Review time off, standby or consider retiming flexible trips.', action: null }); }
   // crew reassignment where an assigned pilot now has a violation
-  for (const t of live.filter(t => t.assign !== 'unassigned')) for (const seat of ['pic', 'sic']) {
+  for (const t of live.filter(t => t.assign !== 'unassigned' || t.crew.obs)) for (const seat of ['pic', 'sic', 'obs']) {
     const id = t.crew[seat]; if (!id) continue;
     const v = compliance(id).find(x => x.severity === 'violation' && x.trips.includes(t.number));
     if (v) { const alt = candidates({ ...t, crew: { ...t.crew, [seat]: null } }, seat.toUpperCase(), { trips: S.trips.map(x => x.id === t.id ? { ...x, crew: { ...x.crew, [seat]: null } } : x) }).find(x => x.ok);
-      add({ key: `crew:${t.id}:${seat}:${id}`, kind: 'Crew reassignment', tripIds: [t.id], text: `${t.number}: ${crewName(id)} — ${v.detail}`, detail: alt ? `Reassign ${seat.toUpperCase()} to ${alt.c.name}.` : 'No compliant alternate found.', action: alt ? { type: 'reassign', tripId: t.id, seat, crewId: alt.c.id } : null }); }
+      add({ key: `crew:${t.id}:${seat}:${id}`, kind: 'Crew reassignment', tripIds: [t.id], text: `${t.number}: ${crewName(id)} — ${v.detail}`, detail: alt ? `Reassign ${SEAT_NAME[seat]} to ${alt.c.name}.` : 'No compliant alternate found.', action: alt ? { type: 'reassign', tripId: t.id, seat, crewId: alt.c.id } : null }); }
   }
   S.suggestions = [...out, ...(S.suggestions || []).filter(s => s.status !== 'open').slice(0, 100)];
   return out;
@@ -183,7 +238,9 @@ export function applySuggestion(sg) {
   const a = sg.action; if (!a) return;
   if (a.type === 'setTail') { const t = tripById(a.tripId); t.tail = a.tail; logChange(t, 'Aircraft change', 'Operational', `Tail set to ${acById(a.tail).tail} (pre-lock suggestion)`, false); }
   if (a.type === 'shift') { const t = tripById(a.tripId); shiftTrip(t, a.hours); logChange(t, 'Re-timed', 'Operational', `Moved ${a.hours > 0 ? '+' : ''}${a.hours / 24} day(s) within flex window`, true); }
-  if (a.type === 'reassign') { const t = tripById(a.tripId); const old = t.crew[a.seat]; t.crew[a.seat] = a.crewId; logChange(t, 'Crew change', 'Operational', `${a.seat.toUpperCase()} ${crewName(old)} → ${crewName(a.crewId)}`, false); notify([old, a.crewId], `${t.number} crew change: ${a.seat.toUpperCase()} now ${crewName(a.crewId)}`, `#/trips/${t.id}`); }
+  if (a.type === 'setObs') { setTripObserver(tripById(a.tripId), a.crewId, 'Operational'); }
+  if (a.type === 'reassign' && a.seat === 'obs') { setTripObserver(tripById(a.tripId), a.crewId, 'Operational'); }
+  else if (a.type === 'reassign') { const t = tripById(a.tripId); const old = t.crew[a.seat]; t.crew[a.seat] = a.crewId; logChange(t, 'Crew change', 'Operational', `${a.seat.toUpperCase()} ${crewName(old)} → ${crewName(a.crewId)}`, false); notify([old, a.crewId], `${t.number} crew change: ${a.seat.toUpperCase()} now ${crewName(a.crewId)}`, `#/trips/${t.id}`); }
   if (a.type === 'combine') {
     const k = tripById(a.keep), m = tripById(a.merge);
     k.paxIds = [...new Set([...k.paxIds, ...m.paxIds])]; k.paxCount = Number(k.paxCount) + Number(m.paxCount); k.legs.forEach(l => l.pax = (Number(l.pax) || 0) + (Number(m.legs[0]?.pax) || 0));
@@ -205,34 +262,55 @@ export function logChange(t, type, reason, detail, billingImpact) {
 
 // ------------------------------------------------------------------ disruptions
 export const DISRUPTIONS = {
-  time: 'Time or destination change', wx: 'Weather delay', pax: 'Passenger change', mx: 'Maintenance (aircraft down)', crew: 'Crew unavailable', popup: 'Pop-up trip', cancel: 'Trip cancellation', correction: 'Post-completion record correction',
+  time: 'Time or destination change', wx: 'Weather delay', pax: 'Passenger change', mx: 'Maintenance (aircraft down)', crew: 'Crew unavailable', popup: 'Pop-up trip', observer: 'Observer added / removed', cancel: 'Trip cancellation', correction: 'Post-completion record correction',
 };
 export function evaluateDisruption(d) {
   const trips = clone(S.trips); const imp = { items: [], violations: [], recoveries: [], billing: false, affectedCrew: new Set(), affectedTrips: new Set() };
   const t = trips.find(x => x.id === d.tripId);
-  const crewViol = (tt, list) => { for (const id of [tt.crew.pic, tt.crew.sic].filter(Boolean)) { imp.affectedCrew.add(id); for (const v of compliance(id, list).filter(v => v.severity === 'violation' && v.trips.includes(tt.number))) imp.violations.push({ ...v, name: crewName(id) }); } };
-  const seatRecoveries = (tt, list, seat, outId) => { const cs = candidates(tt, seat, { trips: list, exclude: [outId] }).filter(x => x.ok).slice(0, 3); cs.forEach(x => imp.recoveries.push({ id: uid('rc'), text: `${tt.number}: assign ${x.c.name} as ${seat} (${x.tripDays} trip days in horizon)`, action: { type: 'reassign', tripId: tt.id, seat: seat.toLowerCase(), crewId: x.c.id } })); if (!cs.length) imp.items.push(`${tt.number}: no compliant ${seat} replacement found — consider retiming or cancelling`); };
+  const crewViol = (tt, list) => { for (const id of tripCrewIds(tt)) { imp.affectedCrew.add(id); for (const v of compliance(id, list).filter(v => v.severity === 'violation' && v.trips.includes(tt.number))) imp.violations.push({ ...v, name: crewName(id) }); } };
+  const seatRecoveries = (tt, list, seat, outId) => { const cs = candidates(tt, seat, { trips: list, exclude: [outId] }).filter(x => x.ok).slice(0, 3); cs.forEach(x => imp.recoveries.push({ id: uid('rc'), text: `${tt.number}: assign ${x.c.name} as ${SEAT_NAME[SEAT_KEY[seat]]} (${x.tripDays} trip days in horizon)`, action: { type: 'reassign', tripId: tt.id, seat: seat.toLowerCase(), crewId: x.c.id } })); if (!cs.length) imp.items.push(`${tt.number}: no compliant ${SEAT_NAME[SEAT_KEY[seat]]} replacement found — ${seat === 'OBS' ? 'the observation can be dropped or moved' : 'consider retiming or cancelling'}`); };
   if (d.type === 'time' || d.type === 'wx') {
     const idx = t.legs.findIndex(l => l.id === d.legId);
     if (d.type === 'wx') { const h = Number(d.delayHrs) || 0; for (let i = Math.max(0, idx); i < t.legs.length; i++) { t.legs[i].dep = T.addH(t.legs[i].dep, h); t.legs[i].arr = T.addH(t.legs[i].arr, h); } imp.items.push(`${t.number}: legs ${idx + 1}–${t.legs.length} delayed ${h} h`); }
     else { const l = t.legs[idx]; if (d.newDep) l.dep = d.newDep; if (d.newArr) l.arr = d.newArr; if (d.newTo) { l.to = d.newTo.toUpperCase(); if (t.legs[idx + 1]) t.legs[idx + 1].from = l.to; } imp.items.push(`${t.number} leg ${idx + 1}: now ${l.from}–${l.to} ${T.short(l.dep)} → ${T.short(l.arr)}`); }
     imp.billing = true; imp.affectedTrips.add(t.id); crewViol(t, trips);
     for (const x of tailConflicts(t, trips)) imp.items.push(`Aircraft conflict with ${x.number}`);
-    for (const v of imp.violations) seatRecoveries(t, trips, t.crew.pic === v.crewId ? 'PIC' : 'SIC', v.crewId);
+    for (const v of imp.violations) seatRecoveries(t, trips, SEAT_NAME[seatOf(t, v.crewId)] === 'Observer' ? 'OBS' : seatOf(t, v.crewId).toUpperCase(), v.crewId);
   }
   if (d.type === 'pax') { t.paxCount = Number(d.paxCount); const ac = acById(t.tail); imp.items.push(`${t.number}: passenger count ${S.trips.find(x => x.id === t.id).paxCount} → ${t.paxCount}`); if (ac && t.paxCount > ac.seats) { imp.items.push(`Exceeds ${ac.tail} seating (${ac.seats})`); S.aircraft.filter(a => a.seats >= t.paxCount && a.id !== ac.id && !tailConflicts({ ...t, tail: a.id }, trips).length && !tailDown(t, a.id)).forEach(a => imp.recoveries.push({ id: uid('rc'), text: `Swap to ${a.tail} (${a.type}, ${a.seats} seats)`, action: { type: 'setTail', tripId: t.id, tail: a.id } })); } imp.billing = true; imp.affectedTrips.add(t.id); }
-  if (d.type === 'cancel') { imp.items.push(`${t.number} will be cancelled; crew released`); imp.billing = true; imp.affectedTrips.add(t.id); [t.crew.pic, t.crew.sic].filter(Boolean).forEach(id => imp.affectedCrew.add(id)); }
+  if (d.type === 'cancel') { imp.items.push(`${t.number} will be cancelled; crew released`); imp.billing = true; imp.affectedTrips.add(t.id); tripCrewIds(t).forEach(id => imp.affectedCrew.add(id)); }
   if (d.type === 'mx') {
     const a = acById(d.aircraftId); const hit = trips.filter(x => x.tail === d.aircraftId && ['Tentative', 'Firm'].includes(x.status) && tripDates(x).some(dd => dd >= d.start && dd <= d.end));
     imp.items.push(`${a.tail} down ${D.label(d.start)}–${D.label(d.end)}; ${hit.length} trip(s) affected`);
-    for (const x of hit) { imp.affectedTrips.add(x.id); const alts = S.aircraft.filter(b => b.id !== a.id && b.type === a.type && !tripDates(x).some(dd => aircraftDown(b, dd)) && !tailConflicts({ ...x, tail: b.id }, trips).length); if (alts.length) alts.forEach(b => imp.recoveries.push({ id: uid('rc'), text: `${x.number}: move to ${b.tail}`, action: { type: 'setTail', tripId: x.id, tail: b.id } })); else imp.items.push(`${x.number}: no same-type aircraft free — retime or cancel`); [x.crew.pic, x.crew.sic].filter(Boolean).forEach(id => imp.affectedCrew.add(id)); }
+    for (const x of hit) { imp.affectedTrips.add(x.id); const alts = S.aircraft.filter(b => b.id !== a.id && b.type === a.type && !tripDates(x).some(dd => aircraftDown(b, dd)) && !tailConflicts({ ...x, tail: b.id }, trips).length); if (alts.length) alts.forEach(b => imp.recoveries.push({ id: uid('rc'), text: `${x.number}: move to ${b.tail}`, action: { type: 'setTail', tripId: x.id, tail: b.id } })); else imp.items.push(`${x.number}: no same-type aircraft free — retime or cancel`); tripCrewIds(x).forEach(id => imp.affectedCrew.add(id)); }
   }
   if (d.type === 'crew') {
-    const hit = trips.filter(x => liveTrip(x) && x.status !== 'Completed' && (x.crew.pic === d.crewId || x.crew.sic === d.crewId) && tripDates(x).some(dd => dd >= d.start && dd <= d.end));
+    const hit = trips.filter(x => liveTrip(x) && x.status !== 'Completed' && tripCrewIds(x).includes(d.crewId) && tripDates(x).some(dd => dd >= d.start && dd <= d.end));
+    const dayObs = (S.observations || []).filter(o => o.status !== 'cancelled' && o.crewId === d.crewId && o.start <= d.end && o.end >= d.start);
+    for (const o of dayObs) imp.items.push(`Calendar-day observation ${D.label(o.start)}${o.end !== o.start ? '–' + D.label(o.end) : ''} will be cancelled`);
     imp.items.push(`${crewName(d.crewId)} unavailable ${D.label(d.start)}–${D.label(d.end)}; ${hit.length} trip(s) affected`); imp.affectedCrew.add(d.crewId);
-    for (const x of hit) { imp.affectedTrips.add(x.id); const seat = x.crew.pic === d.crewId ? 'PIC' : 'SIC'; x.crew[seat.toLowerCase()] = null; seatRecoveries(x, trips, seat, d.crewId); }
+    for (const x of hit) { imp.affectedTrips.add(x.id); const key = seatOf(x, d.crewId); x.crew[key] = null; seatRecoveries(x, trips, key === 'obs' ? 'OBS' : key.toUpperCase(), d.crewId); }
     const days = D.between(d.start, d.end).filter(dd => S.roster.cells[dd]);
     const short = days.map(dd => coverage(dd, { remove: [d.crewId] })).filter(c => !c.ok); if (short.length) imp.items.push(`Roster coverage short on ${short.map(c => D.label(c.date)).join(', ')} once removed`);
+  }
+  if (d.type === 'observer') {
+    imp.affectedTrips.add(t.id); imp.billing = true; tripCrewIds(t).forEach(id => imp.affectedCrew.add(id));
+    const dates = tripDates(t).filter(dd => dd >= TODAY);
+    if (d.obsAction === 'remove') {
+      if (!t.crew.obs) imp.items.push(`${t.number} has no observer to remove`);
+      else { imp.items.push(`${t.number}: remove observer ${crewName(t.crew.obs)}; they return to the available pool`); const was = t.crew.obs; t.crew.obs = null; imp.items.push(`Coverage ${dates.every(dd => coverage(dd, { leaveOnly: !S.roster.cells[dd] }).ok) ? 'met' : 'still short'} on trip dates after release`); imp.affectedCrew.add(was); }
+    } else {
+      const c = crewById(d.crewId);
+      if (!c) imp.items.push('Choose an observer');
+      else {
+        const k = candidates({ ...t, crew: { ...t.crew, obs: null } }, 'OBS', { trips }).find(x => x.c.id === c.id);
+        imp.items.push(`${t.number}: ${t.crew.obs ? `replace observer ${crewName(t.crew.obs)} with` : 'add observer'} ${c.name} (${c.checkAirman ? 'Standards Captain' : c.peerObserver ? 'Peer Observer' : 'not flagged'})`);
+        if (!k || !k.ok) imp.items.push(`Not eligible: ${k ? k.why.join('; ') : 'not a flagged observer'}`);
+        else { t.crew.obs = c.id; const sh = dates.map(dd => coverage(dd, { remove: [c.id], leaveOnly: !S.roster.cells[dd] })).filter(x => !x.ok); imp.items.push(sh.length ? `Coverage short with observer removed from pool: ${sh.map(x => `${D.label(x.date)} (${shortText(x)})`).join('; ')}` : 'Coverage still met with observer removed from the pool'); for (const v of compliance(c.id, trips).filter(v => v.severity === 'violation' && v.trips.includes(t.number))) imp.violations.push({ ...v, name: c.name }); }
+        imp.affectedCrew.add(c.id); if (t.crew.obs && t.crew.obs !== c.id) imp.affectedCrew.add(t.crew.obs);
+        imp.eligible = !!(k && k.ok);
+      }
+    }
   }
   if (d.type === 'popup') { imp.items.push(`New trip ${t?.number || ''} inside the locked window`); if (t) { imp.affectedTrips.add(t.id); for (const seat of ['PIC', 'SIC']) seatRecoveries(t, trips, seat, null); } }
   if (d.type === 'correction') { imp.items.push(`${t.number}: correction to completed record — ${d.detail || ''}`); imp.billing = true; imp.affectedTrips.add(t.id); }
@@ -248,13 +326,19 @@ export function applyDisruption(d, recoveryIds = []) {
     logChange(t, DISRUPTIONS[d.type], d.reason, imp.items.join('; '), true);
   }
   if (d.type === 'pax') { const old = t.paxCount; t.paxCount = Number(d.paxCount); logChange(t, 'Passenger change', d.reason, `Passenger count ${old} → ${t.paxCount}`, true); }
-  if (d.type === 'cancel') { setStatus(t, 'Cancelled', d.reason); logChange(t, 'Cancelled', d.reason, d.detail || 'Cancelled after lock', true); [t.crew.pic, t.crew.sic].filter(Boolean).forEach(id => notify(id, `${t.number} cancelled — you are released`, `#/trips/${t.id}`)); }
+  if (d.type === 'cancel') { setStatus(t, 'Cancelled', d.reason); logChange(t, 'Cancelled', d.reason, d.detail || 'Cancelled after lock', true); tripCrewIds(t).forEach(id => notify(id, `${t.number} cancelled — you are released`, `#/trips/${t.id}`)); }
   if (d.type === 'mx') { const a = acById(d.aircraftId); (a.downtime ||= []).push({ start: d.start, end: d.end, reason: d.detail || 'Unscheduled maintenance' }); for (const id of imp.affectedTrips) logChange(tripById(id), 'Aircraft down', d.reason, `${a.tail} unavailable ${D.label(d.start)}–${D.label(d.end)}`, false); notify('role:admin', `${a.tail} marked down ${D.label(d.start)}–${D.label(d.end)}`); }
-  if (d.type === 'crew') { for (const id of imp.affectedTrips) { const x = tripById(id); const seat = x.crew.pic === d.crewId ? 'pic' : 'sic'; x.crew[seat] = null; logChange(x, 'Crew unavailable', d.reason, `${crewName(d.crewId)} removed from ${seat.toUpperCase()}`, false); } for (const dd of D.between(d.start, d.end)) if (S.roster.cells[dd]) setCell(dd, d.crewId, S.dept.offCode === 'U' ? 'U' : 'OFF'); }
+  if (d.type === 'observer') {
+    if (d.obsAction === 'remove') setTripObserver(t, null, d.reason, true);
+    else if (imp.eligible) setTripObserver(t, d.crewId, d.reason, true);
+  }
+  if (d.type === 'crew') { for (const id of imp.affectedTrips) { const x = tripById(id); const seat = seatOf(x, d.crewId); if (!seat) continue; x.crew[seat] = null; logChange(x, 'Crew unavailable', d.reason, `${crewName(d.crewId)} removed from ${SEAT_NAME[seat]}`, seat === 'obs'); }
+    for (const o of (S.observations || []).filter(o => o.status !== 'cancelled' && o.crewId === d.crewId && o.start <= d.end && o.end >= d.start)) { o.status = 'cancelled'; o.cancelReason = `${DISRUPTIONS.crew}: ${d.reason}`; } for (const dd of D.between(d.start, d.end)) if (S.roster.cells[dd]) setCell(dd, d.crewId, S.dept.offCode === 'U' ? 'U' : 'OFF'); }
   if (d.type === 'correction') logChange(t, 'Record correction', d.reason, d.detail || '', true);
   for (const r of imp.recoveries.filter(r => recoveryIds.includes(r.id))) {
     const a = r.action; const x = tripById(a.tripId);
     if (a.type === 'setTail') { x.tail = a.tail; logChange(x, 'Aircraft change', d.reason, `Recovery: ${r.text}`, false); }
+    if (a.type === 'reassign' && a.seat === 'obs') { setTripObserver(x, a.crewId, d.reason, true); continue; }
     if (a.type === 'reassign') { const old = x.crew[a.seat]; x.crew[a.seat] = a.crewId; if (x.assign === 'unassigned') x.assign = 'proposed'; logChange(x, 'Crew change', d.reason, `Recovery: ${a.seat.toUpperCase()} ${crewName(old)} → ${crewName(a.crewId)}`, false); notify(a.crewId, `You are assigned to ${x.number} as ${a.seat.toUpperCase()} (${DISRUPTIONS[d.type]})`, `#/trips/${x.id}`); for (const dd of tripDates(x)) if (S.roster.cells[dd]) setCell(dd, a.crewId, 'W'); }
   }
   for (const id of imp.affectedCrew) notify(id, `Schedule disruption: ${DISRUPTIONS[d.type]}${t ? ` on ${t.number}` : ''} — ${imp.items[0] || ''}`, t ? `#/trips/${t.id}` : '#/schedule');

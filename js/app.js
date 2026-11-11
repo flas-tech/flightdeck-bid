@@ -13,6 +13,7 @@ import * as accounting from './views/accounting.js';
 import * as reports from './views/reports.js';
 import * as admin from './views/admin.js';
 import * as misc from './views/misc.js';
+import * as observersView from './views/observers.js';
 
 const ROUTES = {
   dashboard: { label: 'Dashboard', view: dashboard, ok: () => true, grp: 'Overview' },
@@ -20,6 +21,7 @@ const ROUTES = {
   schedule: { label: 'Schedule', view: schedule, ok: () => session.role !== 'accounting', grp: 'Crew availability' },
   timeoff: { label: 'Time off', view: timeoff, ok: () => session.role !== 'accounting', grp: 'Crew availability', count: () => can('timeoff.approve') ? S.requests.filter(r => r.status === 'pending').length : 0 },
   bids: { label: 'Bids & swaps', view: bids, ok: () => session.role !== 'accounting', grp: 'Crew availability', count: () => can('bids.approve') ? S.bids.filter(b => b.status === 'open').length : S.bids.filter(b => b.status === 'awaiting-partner' && b.withCrewId === session.userId).length },
+  observers: { label: 'Line checks', view: observersView, ok: () => session.role !== 'accounting', grp: 'Crew availability' },
   trips: { label: 'Trips', view: trips, ok: () => tripsOn(), grp: 'Trip scheduling' },
   passengers: { label: 'Passengers', view: passengers, ok: () => tripsOn() && session.role !== 'crew', grp: 'Trip scheduling' },
   accounting: { label: 'Accounting records', view: accounting, ok: () => tripsOn() && can('acct.view'), grp: 'Trip scheduling', count: () => session.role === 'accounting' ? S.trips.filter(t => t.billingFlag).length : 0 },

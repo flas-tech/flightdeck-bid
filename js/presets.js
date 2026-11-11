@@ -18,7 +18,7 @@ function baseDept(over = {}) {
     holidays: [...HOLIDAYS], blackouts: [],
     groups: [{ name: 'Pilots', kind: 'seat' }],
     defaultRuleSet: { '91': 'rs91', '135': 'rs135' },
-    unresolved: [], setupComplete: true, presetName: '',
+    unresolved: [], setupComplete: true, presetName: '', observer: { flightTimeCounts: true },
     ...over,
   };
 }
@@ -58,7 +58,7 @@ function shell(dept, extra) {
   return {
     schema: 3, scenario: extra.scenario, dept, ruleSets: extra.ruleSets, aircraft: extra.aircraft || [], crew: extra.crew || [], categories: extra.categories || genericCategories(),
     requests: [], bids: [], roster: { cells: {}, status: {}, generatedAt: null, lockedThrough: null, publishedThrough: null, period: 'draft' },
-    passengers: [], trips: [], suggestions: [], disruptions: [], exceptions: [], audit: [], notifications: [], tripSeq: 1001, created: new Date().toISOString(),
+    passengers: [], trips: [], observations: [], suggestions: [], disruptions: [], exceptions: [], audit: [], notifications: [], tripSeq: 1001, created: new Date().toISOString(),
   };
 }
 
@@ -89,6 +89,8 @@ export function coastal(today) {
   crew[4].currency = [{ label: 'G280 recurrent', type: 'G280', expires: D.add(today, 18) }];
   crew[7].currency = [{ label: 'G550 SIC recurrent', type: 'G550', expires: D.add(today, -3) }];
   crew[8].currency = [{ label: 'AW139 recurrent', type: 'AW139', expires: D.add(today, 200) }];
+  // line-check observers: standards captains / check airmen and peer observers
+  crew[0].checkAirman = true; crew[3].checkAirman = true; crew[8].checkAirman = true; crew[2].peerObserver = true; crew[5].peerObserver = true;
   crew.push(person(20, 'Ari Novak', 'Maintenance', ''), person(21, 'Beth Lund', 'Maintenance', ''), person(22, 'Cal Ruiz', 'Maintenance', ''));
   crew.push(person(23, 'Dee Sloan', 'Dispatch', ''), person(24, 'Eli Varga', 'Dispatch', ''), person(25, 'Fay Moss', 'Dispatch', ''));
   for (const c of crew.filter(c => c.group !== 'Pilots')) { c.targetDays = 15; c.seniority = c.seniority - 19; }
@@ -121,18 +123,18 @@ export function coastal(today) {
   // Completed trip in the past (accounting record)
   const done = [L('KJAX', 'KTEB', -6, '13:00', 2.3, 4), L('KTEB', 'KJAX', -4, '18:00', 2.5, 4)];
   done.forEach(l => { l.depAct = T(l.dep, 0.2); l.arrAct = T(l.arr, 0.25); l.flightAct = 2.4; l.blockAct = 2.7; l.paxAct = 4; });
-  trip({ status: 'Completed', legs: done, tail: 'a1', aircraftPref: 'G280', paxIds: ['px1', 'px2', 'px3', 'px8'], paxCount: 4, crew: { pic: 'c1', sic: 'c3' }, assign: 'published', frozen: true,
+  trip({ status: 'Completed', legs: done, tail: 'a1', aircraftPref: 'G280', paxIds: ['px1', 'px2', 'px3', 'px8'], paxCount: 4, crew: { pic: 'c1', sic: 'c3', obs: 'c6' }, observer: { wanted: true, kind: 'any' }, assign: 'published', frozen: true,
     billing: { client: 'Lang Holdings', costCenter: 'CC-100 Executive', code: 'LH-2611', invoiceStatus: 'Ready', invoiceNo: '', costs: { fuel: 6840, landing: 425, catering: 310, crew: 690, other: 0 }, notes: '' },
     history: [{ status: 'Draft', at: D.add(today, -20) + 'T14:00:00Z', by: 'Seed data' }, { status: 'Firm', at: D.add(today, -15) + 'T10:00:00Z', by: 'Seed data' }, { status: 'Completed', at: D.add(today, -4) + 'T22:00:00Z', by: 'Seed data' }] });
   trip({ status: 'Cancelled', legs: [L('KJAX', 'KMIA', -2, '09:00', 1.1, 2)], tail: 'a2', aircraftPref: 'G550', paxIds: ['px6', 'px7'], paxCount: 2, billing: { client: 'Harbor Medical', costCenter: 'CC-300 Medical', code: 'HM-2611', invoiceStatus: 'Not invoiced', invoiceNo: '', costs: { fuel: 0, landing: 0, catering: 0, crew: 0, other: 350 }, notes: 'Late cancellation fee' } });
-  trip({ status: 'Firm', legs: [L('KJAX', 'KTEB', 2, '08:00', 2.4, 3), L('KTEB', 'KJAX', 2, '17:30', 2.6, 3)], tail: 'a2', aircraftPref: 'G550', paxIds: ['px1', 'px3', 'px8'], paxCount: 3, priority: 'High', billing: { client: 'Lang Holdings', costCenter: 'CC-100 Executive', code: 'LH-2612', invoiceStatus: 'Not invoiced', invoiceNo: '', costs: { fuel: 0, landing: 0, catering: 0, crew: 0, other: 0 }, notes: '' } });
+  trip({ status: 'Firm', legs: [L('KJAX', 'KTEB', 2, '08:00', 2.4, 3), L('KTEB', 'KJAX', 2, '17:30', 2.6, 3)], tail: 'a2', aircraftPref: 'G550', paxIds: ['px1', 'px3', 'px8'], paxCount: 3, priority: 'High', notes: 'Standards Captain line check requested.', observer: { wanted: true, kind: 'standards' }, billing: { client: 'Lang Holdings', costCenter: 'CC-100 Executive', code: 'LH-2612', invoiceStatus: 'Not invoiced', invoiceNo: '', costs: { fuel: 0, landing: 0, catering: 0, crew: 0, other: 0 }, notes: '' } });
   trip({ status: 'Firm', legs: [L('KJAX', 'KASE', 4, '10:00', 4.3, 6), L('KASE', 'KJAX', 8, '12:00', 4.0, 6)], tail: 'a1', aircraftPref: 'G280', paxIds: ['px4', 'px5'], paxCount: 6, special: 'Ski equipment; hot catering', billing: { client: 'Grant Ventures', costCenter: 'CHARTER', code: 'GV-0042', invoiceStatus: 'Not invoiced', invoiceNo: '', costs: { fuel: 0, landing: 0, catering: 0, crew: 0, other: 0 }, notes: '' } });
   trip({ status: 'Tentative', flexible: true, flexHours: 24, legs: [L('KJAX', 'KATL', 6, '09:00', 1.2, 2)], aircraftPref: 'G550', tail: 'a3', paxIds: ['px6'], paxCount: 2, hitchAllowed: true, notes: 'Times flexible ±1 day', billing: { client: 'Harbor Medical', costCenter: 'CC-300 Medical', code: 'HM-2612', invoiceStatus: 'Not invoiced', invoiceNo: '', costs: { fuel: 0, landing: 0, catering: 0, crew: 0, other: 0 }, notes: '' } });
   trip({ status: 'Tentative', flexible: true, flexHours: 24, legs: [L('KJAX', 'KATL', 6, '14:00', 1.2, 2)], aircraftPref: 'G550', paxIds: ['px9'], paxCount: 2, hitchAllowed: true, notes: 'Could share with Harbor Medical ATL trip', billing: { client: 'Santos Marine', costCenter: 'CHARTER', code: 'SM-0007', invoiceStatus: 'Not invoiced', invoiceNo: '', costs: { fuel: 0, landing: 0, catering: 0, crew: 0, other: 0 }, notes: '' } });
-  trip({ status: 'Firm', legs: [L('KJAX', 'KPBI', 10, '07:30', 1.0, 4), L('KPBI', 'KJAX', 10, '16:00', 1.0, 0)], tail: 'a3', aircraftPref: 'G550', paxIds: ['px1', 'px2'], paxCount: 4, hitchAllowed: true, notes: 'Return leg empty', billing: { client: 'Lang Holdings', costCenter: 'CC-100 Executive', code: 'LH-2613', invoiceStatus: 'Not invoiced', invoiceNo: '', costs: { fuel: 0, landing: 0, catering: 0, crew: 0, other: 0 }, notes: '' } });
+  trip({ status: 'Firm', legs: [L('KJAX', 'KPBI', 10, '07:30', 1.0, 4), L('KPBI', 'KJAX', 10, '16:00', 1.0, 0)], tail: 'a3', aircraftPref: 'G550', paxIds: ['px1', 'px2'], paxCount: 4, hitchAllowed: true, notes: 'Return leg empty. Annual line check for the crew.', crew: { pic: null, sic: null, obs: 'c4' }, observer: { wanted: true, kind: 'standards' }, billing: { client: 'Lang Holdings', costCenter: 'CC-100 Executive', code: 'LH-2613', invoiceStatus: 'Not invoiced', invoiceNo: '', costs: { fuel: 0, landing: 0, catering: 0, crew: 0, other: 0 }, notes: '' } });
   trip({ status: 'Draft', flexible: true, flexHours: 12, legs: [L('KPBI', 'KJAX', 10, '13:00', 1.0, 2)], aircraftPref: 'G550', paxIds: ['px10', 'px7'], paxCount: 2, notes: 'Harbor Medical staff need a ride home from Palm Beach', billing: { client: 'Harbor Medical', costCenter: 'CC-300 Medical', code: 'HM-2613', invoiceStatus: 'Not invoiced', invoiceNo: '', costs: { fuel: 0, landing: 0, catering: 0, crew: 0, other: 0 }, notes: '' } });
   trip({ status: 'Firm', legs: [L('KCRG', 'KSGJ', 3, '11:00', 0.6, 3), L('KSGJ', 'KCRG', 3, '15:00', 0.6, 3)], tail: 'a4', aircraftPref: 'AW139', paxIds: ['px9'], paxCount: 3, billing: { client: 'Santos Marine', costCenter: 'CHARTER', code: 'SM-0008', invoiceStatus: 'Not invoiced', invoiceNo: '', costs: { fuel: 0, landing: 0, catering: 0, crew: 0, other: 0 }, notes: '' } });
-  trip({ status: 'Firm', legs: [L('KJAX', 'KHPN', 13, '06:00', 2.6, 5), L('KHPN', 'KBOS', 13, '12:00', 0.9, 5), L('KBOS', 'KJAX', 13, '19:30', 3.0, 5)], tail: 'a1', aircraftPref: 'G280', paxIds: ['px1', 'px3'], paxCount: 5, priority: 'High', notes: 'Long day — check duty', billing: { client: 'Lang Holdings', costCenter: 'CC-200 Board', code: 'LH-2614', invoiceStatus: 'Not invoiced', invoiceNo: '', costs: { fuel: 0, landing: 0, catering: 0, crew: 0, other: 0 }, notes: '' } });
+  trip({ status: 'Firm', legs: [L('KJAX', 'KHPN', 13, '06:00', 2.6, 5), L('KHPN', 'KBOS', 13, '12:00', 0.9, 5), L('KBOS', 'KJAX', 13, '19:30', 3.0, 5)], tail: 'a1', aircraftPref: 'G280', paxIds: ['px1', 'px3'], paxCount: 5, priority: 'High', notes: 'Long day — check duty. Peer observation requested.', observer: { wanted: true, kind: 'any' }, billing: { client: 'Lang Holdings', costCenter: 'CC-200 Board', code: 'LH-2614', invoiceStatus: 'Not invoiced', invoiceNo: '', costs: { fuel: 0, landing: 0, catering: 0, crew: 0, other: 0 }, notes: '' } });
   trip({ status: 'Tentative', legs: [L('KJAX', 'MYNN', 22, '10:00', 1.5, 6), L('MYNN', 'KJAX', 25, '15:00', 1.5, 6)], aircraftPref: 'G550', paxIds: ['px4'], paxCount: 6, billing: { client: 'Grant Ventures', costCenter: 'CHARTER', code: 'GV-0043', invoiceStatus: 'Not invoiced', invoiceNo: '', costs: { fuel: 0, landing: 0, catering: 0, crew: 0, other: 0 }, notes: '' } });
   trip({ status: 'Draft', legs: [L('KJAX', 'EGGW', 40, '20:00', 8.2, 4)], aircraftPref: 'G550', paxIds: [], paxCount: 4, notes: 'Owner considering London trip; passengers TBD', billing: { client: 'Lang Holdings', costCenter: 'CC-100 Executive', code: '', invoiceStatus: 'Not invoiced', invoiceNo: '', costs: { fuel: 0, landing: 0, catering: 0, crew: 0, other: 0 }, notes: '' } });
   return s;
@@ -174,7 +176,11 @@ export function pdk(today) {
   ];
   const quals = ['G280:PIC,G550:SIC', 'G550:PIC', 'G280:SIC', 'G280:PIC,G550:SIC', 'G550:PIC', 'G280:SIC', 'G280:PIC,G550:SIC', 'G550:PIC', 'G280:SIC', 'G280:PIC,G550:SIC', 'G550:PIC,G280:PIC', 'G550:SIC'];
   const crew = quals.map((qs, i) => person(i + 1, `Demo Pilot ${String(i + 1).padStart(2, '0')}`, 'Pilots', qs, { targetDays: 15 }));
+  crew[1].checkAirman = true; crew[10].checkAirman = true; crew[3].peerObserver = true;
   const s = shell(dept, { scenario: 'pdk', ruleSets: ruleSets(['91']), aircraft, crew, categories });
+  // Trip module is off here, so observers are planned on calendar days.
+  s.observations.push({ id: uid('ob'), crewId: 'c2', kind: 'standards', start: D.add(today, 6), end: D.add(today, 6), observedIds: ['c3', 'c5'], note: 'Annual line check (G280)', status: 'scheduled', created: new Date().toISOString() });
+  s.observations.push({ id: uid('ob'), crewId: 'c4', kind: 'peer', start: D.add(today, 15), end: D.add(today, 15), observedIds: ['c9'], note: 'Peer observation', status: 'scheduled', created: new Date().toISOString() });
   req(s, 'c1', 'VAC', D.add(today, 8), D.add(today, 12), 'approved');
   req(s, 'c2', 'PWO', D.add(today, 10), D.add(today, 10), 'approved');
   req(s, 'c3', 'O', D.add(today, 10), D.add(today, 10), 'approved');

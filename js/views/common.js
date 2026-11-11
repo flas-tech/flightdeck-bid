@@ -15,15 +15,16 @@ export function unresolvedBanner() {
 export function codeStyle(code) {
   if (code === 'W') return { cls: 'c-W', style: '' };
   if (code === 'SB') return { cls: 'c-SB', style: '' };
+  if (code === 'OBS') return { cls: 'c-OBS', style: '' };
   if (!code || code === S.dept.offCode) return { cls: 'c-off', style: '' };
   const cat = catByCode(code); return { cls: '', style: cat ? `background:${cat.color};color:#fff` : '' };
 }
 export function codeLabel(code) {
-  if (code === 'W') return 'On duty / available'; if (code === 'SB') return 'Standby'; if (code === S.dept.offCode) return `Day off (${code})`;
+  if (code === 'W') return 'On duty / available'; if (code === 'SB') return 'Standby'; if (code === 'OBS') return 'Line-check observer (work day)'; if (code === S.dept.offCode) return `Day off (${code})`;
   return catByCode(code)?.name || code || '—';
 }
 export function legend() {
-  const items = [['W', 'Work / available'], ['SB', 'Standby'], [S.dept.offCode, `Day off (${S.dept.offCode})`], ...S.categories.map(c => [c.code, c.name])];
+  const items = [['W', 'Work / available'], ['SB', 'Standby'], ['OBS', 'Line-check observer (work day, not in coverage pool)'], [S.dept.offCode, `Day off (${S.dept.offCode})`], ...S.categories.map(c => [c.code, c.name])];
   return `<div class="legend">${items.map(([c, l]) => { const s = codeStyle(c); return `<span><i class="${s.cls}" style="${s.style}"></i>${esc(c)} — ${esc(l)}</span>`; }).join('')}<span><i style="box-shadow:inset 0 -4px 0 var(--accent);background:var(--W)"></i>Trip assigned</span></div>`;
 }
 export function crewOpts(list, value, blank = '') { return `${blank ? `<option value="">${esc(blank)}</option>` : ''}${list.map(c => `<option value="${c.id}" ${c.id === value ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}`; }
