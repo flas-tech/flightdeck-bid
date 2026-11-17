@@ -6,7 +6,7 @@
 
 ## Try it
 
-Open the live demo, choose a role (Administrator / Scheduler, Management, Accounting or a crew member) and a preferred layout (calendar, staffing grid or dashboard). The chooser appears every time you sign in. Four scenarios are included:
+Open the live demo at [schedulecaptain.com](https://schedulecaptain.com), choose a role (Administrator / Scheduler, Management, Accounting or a crew member) and a preferred layout (calendar, staffing grid or dashboard). The chooser appears every time you sign in. Four scenarios are included:
 
 | Scenario | What it shows |
 |---|---|
