@@ -157,12 +157,12 @@ const SECTIONS = {
     };
   },
   data(box) {
-    box.innerHTML = `<div class="card"><h2>Demo data</h2><p>All data lives in this browser's local storage. Nothing is sent anywhere.</p><div class="row"><button class="btn" data-a="exp">Export department JSON</button><label class="btn">Import JSON<input type="file" id="imp" accept="application/json,.json" hidden></label><button class="btn danger" data-a="reset">Reset demo</button></div></div>
+    box.innerHTML = `<div class="card"><h2>Department data</h2><p>Your department saves to your account automatically while you are signed in, with a working copy in this browser. Export a JSON backup any time.</p><div class="row"><button class="btn" data-a="exp">Export department JSON</button><label class="btn">Import JSON<input type="file" id="imp" accept="application/json,.json" hidden></label><button class="btn danger" data-a="reset">Clear this browser's copy</button></div></div>
     <div class="card"><h2>Storage</h2><p class="muted">${S.crew.length} crew · ${S.aircraft.length} aircraft · ${S.requests.length} requests · ${S.bids.length} bids · ${S.trips.length} trips · ${S.passengers.length} passengers · ${S.audit.length} audit entries · ~${Math.round(JSON.stringify(S).length / 1024)} KB</p></div>`;
     box.onclick = async e => {
       const a = e.target.closest('[data-a]')?.dataset.a;
       if (a === 'exp') download(`flightdeck-bid-${TODAY}.json`, JSON.stringify(S, null, 2), 'application/json');
-      if (a === 'reset' && await confirm('Reset demo', 'Erase all demo data in this browser and return to the start screen?', 'Reset', 'danger')) { resetAll(); location.hash = ''; location.reload(); }
+      if (a === 'reset' && await confirm('Clear this browser', 'Remove the working copy in this browser and return to the start screen? Your copy saved to your account is kept (delete it from Account).', 'Clear', 'danger')) { resetAll(); location.hash = ''; location.reload(); }
     };
     $('#imp', box).onchange = async e => {
       const f = e.target.files[0]; if (!f) return;

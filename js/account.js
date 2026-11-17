@@ -48,17 +48,24 @@ export async function signUp({ email, password, display_name, organization }) {
   const j = await r.json().catch(() => ({})); if (!r.ok) { const e = new Error(j.error || 'Could not create the account.'); e.code = j.code; throw e; }
   await signIn(email, password);
 }
-export async function signOut() { await sb.auth.signOut(); await refresh(); }
+export async function signOut() { await flushCloud(); await sb.auth.signOut(); await refresh(); }
 export async function updateProfile(p) { const { error } = await sb.from('profiles').update(p).eq('id', acct.user.id); if (error) throw error; await refresh(); }
 
 // ---- cloud-saved demo department
 let timer = null, pending = null;
 export function queueCloudSave(state) {
-  if (!signedIn() || !state) return; pending = state; clearTimeout(timer);
+  if (!signedIn() || !state || state.supportOf) return; pending = state; clearTimeout(timer);
   timer = setTimeout(async () => { const s = pending; pending = null; try { const { error } = await sb.from('demo_states').upsert({ user_id: acct.user.id, state: s, department: s.dept?.name || '' }); if (error) throw error; acct.cloud = { department: s.dept?.name, updated_at: new Date().toISOString() }; } catch (e) { console.warn('Cloud save failed', e); } }, 2500);
 }
+export async function flushCloud() { if (!pending || !signedIn()) return; clearTimeout(timer); const s = pending; pending = null; try { await sb.from('demo_states').upsert({ user_id: acct.user.id, state: s, department: s.dept?.name || '' }); } catch (e) { console.warn(e); } }
 export async function loadCloud() { const { data, error } = await sb.from('demo_states').select('state').eq('user_id', acct.user.id).maybeSingle(); if (error) throw error; return data?.state || null; }
 export async function deleteCloud() { const { error } = await sb.from('demo_states').delete().eq('user_id', acct.user.id); if (error) throw error; acct.cloud = null; }
+
+export async function changePassword(pw) { const { error } = await sb.auth.updateUser({ password: pw }); if (error) throw error; }
+
+// ---- admin support
+export async function listUsers() { const { data, error } = await sb.rpc('admin_list_users'); if (error) throw error; return data || []; }
+export async function loadUserState(userId) { const { data, error } = await sb.from('demo_states').select('state').eq('user_id', userId).maybeSingle(); if (error) throw error; return data?.state || null; }
 
 // ---- product feedback
 export async function sendFeedback({ kind, message, page, context }) {

@@ -6,7 +6,7 @@
 
 ## Try it
 
-Open the live demo at [schedulecaptain.com](https://schedulecaptain.com), choose a role (Administrator / Scheduler, Management, Accounting or a crew member) and a preferred layout (calendar, staffing grid or dashboard). The chooser appears every time you sign in. Four scenarios are included:
+Open [schedulecaptain.com](https://schedulecaptain.com), sign in, then choose a role (Administrator / Scheduler, Management, Accounting or a crew member) and a preferred layout (calendar, staffing grid or dashboard). The chooser appears every time you sign in. Admins also see the sample departments below (regular users start with their own department):
 
 | Scenario | What it shows |
 |---|---|
@@ -19,7 +19,9 @@ Use **Setup & rules → Data** to reset, export or import the whole dataset as J
 
 ## Accounts, feedback and What's new
 
-- **Free accounts** (optional): create an account or log in from the start screen. Signed-in users get their demo department saved to their account and can pick it up on another device ("My saved department"). Guests can still use everything without an account.
+- **Accounts required**: sign in or create a free account. New users start with the guided setup for their own department, saved to their account and available on any device.
+- **Sample departments are admin-only**: the mixed fleet, PDK preset and small department samples appear only for Schedule Captain admins, for demos and support.
+- **Users & support** (admin): list every account with organization, saved department, feedback and last sign-in, and open a read-only support view of any user's saved department.
 - **Send feedback**: the button at the top of every page sends an idea, problem or question with the page, demo role and app version. Senders see status and replies on the same page.
 - **What's new**: after each update a pop-up lists what changed; every release is listed under Help → What's new.
 - **Admin inbox** (App feedback): admins set a status and reply. Admin access is claimed once with a single-use code from Account, and requires an authenticator app (two-factor) every session.

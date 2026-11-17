@@ -1,6 +1,12 @@
 // Version tracking and release notes ("What's new").
-export const APP_VERSION = '1.2.0';
+export const APP_VERSION = '1.3.0';
 export const RELEASES = [
+  { v: '1.3.0', d: '2026-11-16', t: 'Your own department, saved to your account', items: [
+    'Schedule Captain now lives at schedulecaptain.com.',
+    'Sign in to get started. New accounts begin with the guided setup for your own department, and everything you set up is saved to your account.',
+    'Sample departments are now reserved for the Schedule Captain team, who use them for demos and support.',
+    'Change your password any time from Account.',
+  ] },
   { v: '1.2.0', d: '2026-11-16', t: 'Schedule Captain: accounts, feedback and What’s new', items: [
     'FlightDeck Bid is now Schedule Captain.',
     'Create a free account or log in from the start screen. Signed-in users get their demo department saved to their account, so they can pick up where they left off on another device. Guests can still try everything without an account.',

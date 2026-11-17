@@ -236,3 +236,9 @@ td:first-child a, td:first-child strong { white-space: nowrap; }
   .fb-btn { padding: 4px 8px; }
 }
 @media (max-width: 420px) { .fb-btn { font-size: 12px; } }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.support-bar { display: flex; gap: 10px; align-items: center; justify-content: center; flex-wrap: wrap; }
+.support-bar button { font: inherit; font-weight: 700; border: 1px solid currentColor; background: transparent; color: inherit; border-radius: 6px; padding: 1px 8px; cursor: pointer; }
+.landing { max-width: 640px; margin: 8vh auto 0; }
+.landing .card { padding: 22px; }
+.landing ul { margin: 10px 0 16px; padding-left: 20px; }

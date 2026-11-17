@@ -212,7 +212,7 @@ export function small(today) {
 }
 
 export function blank(today) {
-  const dept = baseDept({ name: 'New Flight Department', mode: '91', setupComplete: false, presetName: 'Blank setup', modules: { trips: false }, holidays: [...HOLIDAYS] });
+  const dept = baseDept({ name: 'New Flight Department', mode: '91', setupComplete: false, presetName: 'Custom setup', modules: { trips: false }, holidays: [...HOLIDAYS] });
   return shell(dept, { scenario: 'blank', ruleSets: ruleSets(['91', '135']), aircraft: [], crew: [] });
 }
 
