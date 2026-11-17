@@ -72,7 +72,7 @@ Then open http://localhost:8000. Opening `index.html` through `file://` is not s
 - Invoice status, billing flags, printable invoice, period reports and CSV export.
 
 ### Line-check observers
-- Flag crew as Standards Captain / Check Airman or Peer Observer (Setup & rules → Crew, or CSV import).
+- Flag crew as Standards Captain / Check Airman or Peer Observer (Setup & rules → Crew, or Add several people).
 - Add an optional observer to any trip (builder step 5 or the trip's crew panel), or to a calendar day on the Line checks page when the Trip module is off.
 - Only flagged crew can be assigned. An observation day counts as a flight work day (work and fairness counters), and the observer is removed from the available pool for coverage, time-off checks, bids and swaps.
 - Lock & match and trip suggestions treat the observer as a hard resource and show the coverage impact. Observer duty is checked against the trip's rule set; counting observed flight time toward limits is a department setting.
@@ -83,7 +83,7 @@ Then open http://localhost:8000. Opening `index.html` through `file://` is not s
 - Stricter-than-baseline changes are allowed. Relaxing a regulatory baseline requires a written justification, raises a management exception and shows a persistent warning until resolved.
 - Versioned rule history, override logging, exception approvals, notifications and a full audit trail.
 - Reports: fairness, coverage, currency/expiring items and compliance.
-- Admin: department profile, groups, aircraft and downtime, crew (with bulk CSV import), categories, coverage, bidding method and policies.
+- Admin: department profile, groups, aircraft and downtime, crew (simple forms with per-type qualification picks, training rows and allowances; add several people by typing rows or pasting from a spreadsheet), categories, coverage, bidding method and policies.
 
 ## Spec mapping
 
@@ -112,3 +112,7 @@ Then open http://localhost:8000. Opening `index.html` through `file://` is not s
 ## Structure
 
 `index.html`, `styles.css`, and `js/` (vanilla ES modules): `store.js` state and permissions, `engine.js` roster/bidding/compliance, `trips.js` trip logic, `rules.js` rule baselines, `presets.js` scenarios, `views/` one module per screen. GitHub Pages deploys via `.github/workflows/pages.yml`.
+
+## Staffing & bidding guide
+
+Help → Staffing & bidding guide explains each coverage model (full, utilization, standby, hybrid) and award method (seniority, lottery draw, rotating, points) with pros, cons and best fit. The setup wizard runs department → aircraft → coverage & groups → categories → bidding → crew, so groups exist before crew are added.

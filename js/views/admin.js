@@ -1,12 +1,20 @@
 import { esc, D, uid, clone, parseCsv, download, csv } from '../util.js';
 import { S, session, can, save, audit, exception, TODAY, setState, resetAll, catByCode, crewName, types } from '../store.js';
 import { PARAMS, BASELINES, makeRuleSet, relaxations, citeFor } from '../rules.js';
-import { generateRoster, METHODS } from '../engine.js';
+import { generateRoster, METHODS, orderCrew } from '../engine.js';
 import { $, $$, modal, toast, justify, confirm, sel, tabs, empty, badge, formData } from '../ui.js';
-import { relaxBanner, unresolvedBanner } from './common.js';
+import { relaxBanner, unresolvedBanner, awardMethodFields, bindAwardMethod } from './common.js';
 
-const TABS = [['dept', 'Department'], ['rules', 'Duty / rest rules'], ['aircraft', 'Aircraft'], ['crew', 'Crew'], ['categories', 'Time-off categories'], ['coverage', 'Groups & coverage'], ['bidding', 'Bidding & fairness'], ['policies', 'Policies'], ['data', 'Data']];
-const WIZ = ['dept', 'aircraft', 'crew', 'categories', 'coverage', 'bidding'];
+const TABS = [['dept', 'Department'], ['rules', 'Duty / rest rules'], ['aircraft', 'Aircraft'], ['coverage', 'Groups & coverage'], ['crew', 'Crew'], ['categories', 'Time-off categories'], ['bidding', 'Bidding & fairness'], ['policies', 'Policies'], ['data', 'Data']];
+const WIZ = ['dept', 'aircraft', 'coverage', 'categories', 'bidding', 'crew'];
+const WIZ_INTRO = {
+  dept: 'Name your department and choose how you operate. You can change anything later under Setup & rules.',
+  aircraft: 'Add your aircraft. Their types (for example G280, G550, AW139) become the qualifications you pick for each pilot.',
+  coverage: 'Set up your groups — pilots, maintenance, dispatch, line — and how many people each needs on duty. Do this before adding people so each person can be placed in a group.',
+  categories: 'Choose the kinds of time off your department uses and how much each person gets.',
+  bidding: 'Decide whose time off and bids are awarded first when requests compete.',
+  crew: 'Now add your people. Groups and aircraft types from the earlier steps are ready to pick.',
+};
 const ui = { step: 0 };
 
 const get = (o, p) => p.split('.').reduce((x, k) => x?.[k], o);
@@ -35,8 +43,8 @@ export function render(el, param = 'dept') {
 
 function wizard(el) {
   const k = WIZ[ui.step]; const label = TABS.find(t => t[0] === k)[1];
-  el.innerHTML = `<div class="page-head"><div><h1>Department setup</h1><p>Step ${ui.step + 1} of ${WIZ.length}: ${esc(label)}. You can change anything later under Setup & rules.</p></div></div>
-  <div class="row" style="margin-bottom:12px">${WIZ.map((w, i) => `<span class="badge ${i === ui.step ? 'info' : i < ui.step ? 'ok' : 'muted'}">${i + 1}. ${esc(TABS.find(t => t[0] === w)[1])}</span>`).join('')}</div>
+  el.innerHTML = `<div class="page-head"><div><h1>Department setup</h1><p>Step ${ui.step + 1} of ${WIZ.length}: <strong>${esc(label)}</strong>. ${esc(WIZ_INTRO[k])}</p></div></div>
+  <div class="row wiz-steps" style="margin-bottom:12px">${WIZ.map((w, i) => `<span class="badge ${i === ui.step ? 'info' : i < ui.step ? 'ok' : 'muted'}">${i + 1}. ${esc(TABS.find(t => t[0] === w)[1])}</span>`).join('')}</div>
   <div id="ab"></div><div class="row" style="margin-top:16px"><button class="btn" data-w="back" ${ui.step ? '' : 'disabled'}>Back</button>${ui.step < WIZ.length - 1 ? '<button class="btn primary" data-w="next">Next</button>' : '<button class="btn primary" data-w="finish">Finish and generate roster</button>'}</div>`;
   SECTIONS[k]($('#ab', el));
   $$('[data-w]', el).forEach(b => b.onclick = () => {
@@ -85,7 +93,7 @@ const SECTIONS = {
   },
   aircraft(box) {
     const f = (a, k, type = 'text', w = 90) => `<input data-f="${k}" type="${type}" value="${esc(a[k] ?? '')}" style="width:${w}px" aria-label="${k}">`;
-    box.innerHTML = `<div class="card flush"><div class="tbl-wrap"><table><thead><tr><th>Tail</th><th>Type</th><th>Part</th><th>Min crew</th><th>Seats</th><th>Base</th><th>Status</th><th>Rule set</th><th>Downtime</th><th></th></tr></thead><tbody>${S.aircraft.map(a => `<tr data-ac="${a.id}"><td>${f(a, 'tail')}</td><td>${f(a, 'type', 'text', 80)}</td><td>${sel('', [['91', '91'], ['135', '135']], a.part, 'data-f="part" style="width:70px"')}</td><td>${f(a, 'minCrew', 'number', 60)}</td><td>${f(a, 'seats', 'number', 60)}</td><td>${f(a, 'base', 'text', 70)}</td><td>${sel('', [['active', 'Active'], ['mx', 'In maintenance'], ['inactive', 'Inactive']], a.status, 'data-f="status" style="width:auto"')}</td><td>${sel('', [['', 'Default'], ...S.ruleSets.map(r => [r.id, r.name.slice(0, 32)])], a.ruleSetId || '', 'data-f="ruleSetId" style="width:150px"')}</td><td><button class="btn sm" data-dt="${a.id}">${(a.downtime || []).length} period(s)</button></td><td><button class="btn sm ghost" data-del="${a.id}" aria-label="Remove ${esc(a.tail)}">✕</button></td></tr>`).join('') || '<tr><td colspan="10" class="muted">No aircraft yet.</td></tr>'}</tbody></table></div></div>
+    box.innerHTML = `<div class="card flush"><div class="tbl-wrap"><table class="edit-stack"><thead><tr><th>Tail</th><th>Type</th><th>Part</th><th>Min crew</th><th>Seats</th><th>Base</th><th>Status</th><th>Rule set</th><th>Downtime</th><th></th></tr></thead><tbody>${S.aircraft.map(a => `<tr data-ac="${a.id}"><td>${f(a, 'tail')}</td><td>${f(a, 'type', 'text', 80)}</td><td>${sel('', [['91', '91'], ['135', '135']], a.part, 'data-f="part" style="width:70px"')}</td><td>${f(a, 'minCrew', 'number', 60)}</td><td>${f(a, 'seats', 'number', 60)}</td><td>${f(a, 'base', 'text', 70)}</td><td>${sel('', [['active', 'Active'], ['mx', 'In maintenance'], ['inactive', 'Inactive']], a.status, 'data-f="status" style="width:auto"')}</td><td>${sel('', [['', 'Default'], ...S.ruleSets.map(r => [r.id, r.name.slice(0, 32)])], a.ruleSetId || '', 'data-f="ruleSetId" style="width:150px"')}</td><td><button class="btn sm" data-dt="${a.id}">${(a.downtime || []).length} period(s)</button></td><td><button class="btn sm ghost" data-del="${a.id}" aria-label="Remove ${esc(a.tail)}">✕</button></td></tr>`).join('') || '<tr><td colspan="10" class="muted">No aircraft yet.</td></tr>'}</tbody></table></div></div>
     <div class="row" style="margin-top:10px"><button class="btn primary" data-a="add">Add aircraft</button></div><p class="muted">Pilots qualify by type and seat (for example G280 PIC and G550 SIC). Types are taken from the aircraft list: ${esc(types().join(', ') || 'none')}.</p>`;
     box.onchange = e => { const tr = e.target.closest('[data-ac]'); const k = e.target.dataset.f; if (!tr || !k) return; const a = S.aircraft.find(x => x.id === tr.dataset.ac); const old = a[k]; a[k] = k === 'ruleSetId' ? e.target.value || null : valOf(e.target); if (k === 'tail' || k === 'type') a[k] = String(a[k]).toUpperCase(); audit('Aircraft edited', `${a.tail} ${k}: ${old} → ${a[k]}`); save(); };
     box.onclick = async e => {
@@ -96,17 +104,17 @@ const SECTIONS = {
   },
   crew(box) {
     box.innerHTML = `<div class="card flush"><div class="tbl-wrap"><table><thead><tr><th>#</th><th>Name</th><th>Group</th><th>Qualifications</th><th>Target days / 30</th><th>Currency</th><th>Status</th><th></th></tr></thead><tbody>${[...S.crew].sort((a, b) => a.seniority - b.seniority).map(c => `<tr><td>${c.seniority}</td><td><strong>${esc(c.name)}</strong> <small>${esc(c.empId)}</small>${c.contract ? ' ' + badge('Contract', 'info') : ''}${c.checkAirman ? ' ' + badge('Standards Captain', 'ok') : c.peerObserver ? ' ' + badge('Peer Observer', 'info') : ''}</td><td>${esc(c.group)}</td><td><small>${esc(c.quals.map(q => `${q.type} ${q.seat}`).join(', ') || '—')}</small></td><td>${c.targetDays}</td><td><small>${(c.currency || []).map(x => `${esc(x.label)} ${esc(D.label(x.expires))}`).join('<br>') || '—'}</small></td><td>${badge(c.status, c.status === 'active' ? 'ok' : 'muted')}</td><td><button class="btn sm" data-e="${c.id}">Edit</button></td></tr>`).join('') || '<tr><td colspan="8" class="muted">No crew yet.</td></tr>'}</tbody></table></div></div>
-    <div class="row" style="margin-top:10px"><button class="btn primary" data-a="add">Add crew member</button><button class="btn" data-a="import">Bulk import CSV</button><button class="btn ghost" data-a="export">Export CSV</button></div>`;
+    <div class="row" style="margin-top:10px"><button class="btn primary" data-a="add">Add one person</button><button class="btn" data-a="import">Add several people</button><button class="btn ghost" data-a="export">Download crew list (.csv)</button></div>`;
     box.onclick = e => {
       const ed = e.target.closest('[data-e]'); if (ed) return crewForm(S.crew.find(c => c.id === ed.dataset.e));
       const a = e.target.closest('[data-a]')?.dataset.a;
       if (a === 'add') crewForm(null);
-      if (a === 'import') bulkImport();
+      if (a === 'import') bulkAdd();
       if (a === 'export') download('crew.csv', csv([['name', 'empId', 'group', 'seniority', 'quals', 'targetDays', 'contract', 'checkAirman', 'peerObserver', 'status'], ...S.crew.map(c => [c.name, c.empId, c.group, c.seniority, c.quals.map(q => `${q.type}:${q.seat}`).join(' '), c.targetDays, c.contract ? 'yes' : 'no', c.checkAirman ? 'yes' : 'no', c.peerObserver ? 'yes' : 'no', c.status])]));
     };
   },
   categories(box) {
-    box.innerHTML = `<div class="card flush"><div class="tbl-wrap"><table><thead><tr><th>Code</th><th>Name</th><th>Color</th><th>Unavailable</th><th>Counts toward cap</th><th>Balance</th><th>Approval</th><th>Award priority</th><th>Training</th><th>Meaning confirmed</th><th></th></tr></thead><tbody>${S.categories.map(c => `<tr data-cat="${esc(c.code)}"><td><strong>${esc(c.code)}</strong></td><td><input data-f="name" value="${esc(c.name)}" style="width:190px" aria-label="Name"></td><td><input type="color" data-f="color" value="${esc(c.color)}" aria-label="Color"></td><td><input type="checkbox" data-f="unavailable" ${c.unavailable ? 'checked' : ''} aria-label="Unavailable"></td><td><input type="checkbox" data-f="countsCap" ${c.countsCap ? 'checked' : ''} aria-label="Counts toward cap"></td><td><input type="number" data-f="balance.amount" value="${c.balance.amount}" style="width:60px" aria-label="Amount"> ${sel('', [['none', 'no balance'], ['month', 'per month'], ['year', 'per year']], c.balance.period, 'data-f="balance.period" style="width:auto"')}</td><td><input type="checkbox" data-f="requiresApproval" ${c.requiresApproval ? 'checked' : ''} aria-label="Requires approval"></td><td><input type="number" data-f="priority" value="${c.priority}" min="0" style="width:60px" aria-label="Priority"></td><td><input type="checkbox" data-f="training" ${c.training ? 'checked' : ''} aria-label="Training"></td><td><input type="checkbox" data-f="confirmed" ${c.confirmed ? 'checked' : ''} aria-label="Confirmed"></td><td><button class="btn sm ghost" data-del="${esc(c.code)}" aria-label="Remove ${esc(c.code)}">✕</button></td></tr>`).join('')}</tbody></table></div></div>
+    box.innerHTML = `<div class="card flush"><div class="tbl-wrap"><table class="edit-stack"><thead><tr><th>Code</th><th>Name</th><th>Color</th><th>Unavailable</th><th>Counts toward cap</th><th>Balance</th><th>Approval</th><th>Award priority</th><th>Training</th><th>Meaning confirmed</th><th></th></tr></thead><tbody>${S.categories.map(c => `<tr data-cat="${esc(c.code)}"><td><strong>${esc(c.code)}</strong></td><td><input data-f="name" value="${esc(c.name)}" style="width:190px" aria-label="Name"></td><td><input type="color" data-f="color" value="${esc(c.color)}" aria-label="Color"></td><td><input type="checkbox" data-f="unavailable" ${c.unavailable ? 'checked' : ''} aria-label="Unavailable"></td><td><input type="checkbox" data-f="countsCap" ${c.countsCap ? 'checked' : ''} aria-label="Counts toward cap"></td><td><input type="number" data-f="balance.amount" value="${c.balance.amount}" style="width:60px" aria-label="Amount"> ${sel('', [['none', 'no balance'], ['month', 'per month'], ['year', 'per year']], c.balance.period, 'data-f="balance.period" style="width:auto"')}</td><td><input type="checkbox" data-f="requiresApproval" ${c.requiresApproval ? 'checked' : ''} aria-label="Requires approval"></td><td><input type="number" data-f="priority" value="${c.priority}" min="0" style="width:60px" aria-label="Priority"></td><td><input type="checkbox" data-f="training" ${c.training ? 'checked' : ''} aria-label="Training"></td><td><input type="checkbox" data-f="confirmed" ${c.confirmed ? 'checked' : ''} aria-label="Confirmed"></td><td><button class="btn sm ghost" data-del="${esc(c.code)}" aria-label="Remove ${esc(c.code)}">✕</button></td></tr>`).join('')}</tbody></table></div></div>
     <div class="row" style="margin-top:10px"><input id="nc" placeholder="New code, e.g. PDO" maxlength="5" style="width:150px" aria-label="New category code"><button class="btn" data-a="add">Add category</button></div>
     <p class="muted">Award priority: lower numbers are awarded first when requests compete (for example VAC 1, D/A 2, PWO/O 3). Categories marked “meaning unconfirmed” stay visible as open items until the department confirms them.</p>`;
     box.onchange = e => { const tr = e.target.closest('[data-cat]'); const k = e.target.dataset.f; if (!tr || !k) return; const c = catByCode(tr.dataset.cat); const old = get(c, k); set(c, k, valOf(e.target)); audit('Time-off category edited', `${c.code} ${k}: ${old} → ${get(c, k)}`); save(); };
@@ -117,7 +125,9 @@ const SECTIONS = {
   },
   coverage(box) {
     box.innerHTML = `<div class="card"><h2>Coverage model</h2><div class="form-grid">${dSel('coverage.model', 'Model', [['hybrid', 'Hybrid — trips plus utilization buffer'], ['full', 'Full crews per aircraft every day'], ['utilization', 'Utilization percentage'], ['standby', 'Trips only plus standby crews']])}${dIn('coverage.utilizationPct', 'Expected utilization (%)', 'number', 'min="0" max="100"')}${dIn('coverage.bufferPct', 'Hybrid buffer (%)', 'number', 'min="0" max="100"')}${dIn('coverage.standbyCrewsPerType', 'Standby crews per type', 'number', 'min="0"')}</div>${dIn('coverage.picCanFillSic', 'A PIC-qualified pilot may fill an SIC seat on the same type', 'checkbox')}</div>
-    <div class="card"><h2>Groups</h2><p class="muted">“Seat” groups (pilots) are matched by aircraft type and seat. “Count” groups (maintenance, dispatch, schedulers, line) need a minimum number on duty each day.</p><table><thead><tr><th>Group</th><th>Kind</th><th>Min on duty</th><th>Members</th><th></th></tr></thead><tbody>${S.dept.groups.map((g, i) => `<tr data-g="${i}"><td><input data-f="name" value="${esc(g.name)}" aria-label="Group name"></td><td>${sel('', [['seat', 'Seat (type/seat matching)'], ['count', 'Count (minimum on duty)']], g.kind, 'data-f="kind" style="width:auto"')}</td><td>${g.kind === 'count' ? `<input type="number" data-f="minOnDuty" value="${g.minOnDuty || 0}" min="0" style="width:70px" aria-label="Min on duty">` : '—'}</td><td>${S.crew.filter(c => c.group === g.name).length}</td><td>${S.crew.some(c => c.group === g.name) ? '' : `<button class="btn sm ghost" data-del="${i}" aria-label="Remove group">✕</button>`}</td></tr>`).join('')}</tbody></table><div class="row" style="margin-top:10px"><input id="ng" placeholder="New group, e.g. Maintenance" style="max-width:240px" aria-label="New group"><button class="btn" data-a="addg">Add group</button></div></div>`;
+    <div class="card"><h2>Groups</h2><p class="muted">Groups are the teams you schedule. <strong>Pilot groups</strong> are matched to aircraft type and seat (PIC/SIC) using each pilot’s qualifications. <strong>Staff groups</strong> — maintenance, dispatch, scheduling, line — just need a minimum number of people on duty each day.</p>
+      <div class="grp-list">${S.dept.groups.map((g, i) => { const n = S.crew.filter(c => c.group === g.name).length; return `<div class="grp-row" data-g="${i}"><label class="field"><span>Group name</span><input data-f="name" value="${esc(g.name)}"></label><label class="field"><span>Type</span>${sel('', [['seat', 'Pilots'], ['count', 'Staff']], g.kind, 'data-f="kind"')}</label><label class="field"><span>Minimum on duty</span>${g.kind === 'count' ? `<input type="number" data-f="minOnDuty" value="${g.minOnDuty || 0}" min="0">` : '<input disabled value="Set by aircraft coverage" aria-label="Minimum on duty">'}</label><div class="grp-meta"><small class="muted">${n} ${n === 1 ? 'person' : 'people'}</small>${n ? '' : `<button class="btn sm ghost" data-del="${i}" aria-label="Remove group ${esc(g.name)}">Remove</button>`}</div></div>`; }).join('')}</div>
+      <div class="row nowrap" style="margin-top:10px"><input id="ng" placeholder="New group, e.g. Maintenance" aria-label="New group name"><button class="btn" data-a="addg">Add group</button></div><small class="muted">New groups start as staff groups needing 1 person on duty; change the type above if it’s a pilot group.</small></div>`;
     bindDept(box);
     box.addEventListener('change', e => { const tr = e.target.closest('[data-g]'); const k = e.target.dataset.f; if (!tr || !k) return; const g = S.dept.groups[Number(tr.dataset.g)]; const old = g[k]; const v = valOf(e.target); if (k === 'name') S.crew.forEach(c => { if (c.group === old) c.group = v; }); g[k] = v; audit('Group edited', `${old} ${k} → ${v}`); save(); });
     box.onclick = e => {
@@ -126,10 +136,10 @@ const SECTIONS = {
     };
   },
   bidding(box) {
-    box.innerHTML = `<div class="card"><h2>Award method</h2><div class="form-grid">${dSel('bidMethod', 'Method', Object.entries(METHODS))}${dIn('lotterySeed', 'Lottery seed', 'text', '', 'Same seed → same order; publish it for transparency.')}${dIn('rotationIndex', 'Rotation index', 'number', 'min="0"', 'Advance each period so first pick rotates.')}${dIn('bidRounds', 'Rounds (max ranked bids per person)', 'number', 'min="1" max="9"')}</div>${dIn('seniorityTieBreaker', 'Use seniority as tie-breaker', 'checkbox')}${dIn('contractLast', 'Contract crew award after staff', 'checkbox')}</div>
+    box.innerHTML = `<div class="card"><h2>Award method</h2><p class="muted">Decides whose time off and bids are awarded first when requests compete. <a href="#/guide">See how each method works, with pros and cons</a>.</p>${awardMethodFields(METHODS, crewName(orderCrew('rotating', S.crew.filter(c => c.status === 'active').map(c => c.id))[0]))}<div class="form-grid">${dIn('bidRounds', 'Ranked choices per person', 'number', 'min="1" max="9"', 'How many ranked bids each person can submit per period.')}</div>${dIn('seniorityTieBreaker', 'Use seniority to break ties', 'checkbox')}${dIn('contractLast', 'Award staff crew before contract crew', 'checkbox')}</div>
     <div class="card"><h2>Roster fairness weights</h2><p class="muted">Higher weight = the generator tries harder to even out that measure when filling work days.</p><div class="form-grid">${dIn('fairness.target', 'Target work days', 'number', 'step="0.5" min="0"')}${dIn('fairness.weekend', 'Weekend balance', 'number', 'step="0.5" min="0"')}${dIn('fairness.holiday', 'Holiday balance', 'number', 'step="0.5" min="0"')}${dIn('fairness.streak', 'Avoid long streaks', 'number', 'step="0.5" min="0"')}${dIn('fairness.preference', 'Honor preferences', 'number', 'step="0.5" min="0"')}</div></div>
     <div class="card"><h2>Roster codes</h2><div class="form-grid">${dIn('offCode', 'Day-off code', 'text', 'maxlength="4"', 'PDK preset uses U.')}${dIn('maxConsecutiveWork', 'Max consecutive work days', 'number', 'min="1" max="14"')}</div><button class="btn" data-a="regen">Regenerate proposed roster</button></div>`;
-    bindDept(box);
+    bindDept(box); bindAwardMethod(box, { save, audit, METHODS });
     box.onclick = async e => { if (e.target.closest('[data-a="regen"]')) { if (!(await confirm('Regenerate roster', 'Rebuild the proposed roster for unlocked days with current settings? Locked and published days are kept.', 'Regenerate'))) return; generateRoster(); audit('Roster regenerated', 'From settings'); save(); toast('Roster regenerated'); } };
   },
   policies(box) {
@@ -174,42 +184,93 @@ const SECTIONS = {
 
 // ---------------------------------------------------------------- helpers
 const qStr = c => c.quals.map(q => `${q.type}:${q.seat}`).join(', ');
-const parseQ = s => s.split(/[,\s]+/).filter(Boolean).map(x => { const [type, seat = 'PIC'] = x.split(':'); return { type: type.toUpperCase(), seat: seat.toUpperCase() === 'SIC' ? 'SIC' : 'PIC' }; });
+const parseQ = s => { const out = []; for (const tok of String(s).split(/[,;\s]+/).filter(Boolean)) { const [t, seat] = tok.split(':'); if (/^(PIC|SIC|CA|FO)$/i.test(t) && out.length) { out[out.length - 1].seat = /^(SIC|FO)$/i.test(t) ? 'SIC' : 'PIC'; continue; } out.push({ type: t.toUpperCase(), seat: /^(SIC|FO)$/i.test(seat || '') ? 'SIC' : 'PIC' }); } return out; };
+
+// ---------------------------------------------------------------- crew entry (forms, not CSV)
+const SEAT_OPTS = [['', 'Not qualified'], ['PIC', 'PIC (captain)'], ['SIC', 'SIC (first officer)']];
+const seatOf = (x, ty) => x.quals.find(q => q.type === ty)?.seat || '';
+const isSeatGroup = name => (S.dept.groups.find(g => g.name === name)?.kind || 'count') === 'seat';
+const balCats = () => S.categories.filter(c => c.balance?.period && c.balance.period !== 'none');
+const curRow = (y = {}) => `<div class="cur-row" data-cur><label class="field"><span>Item</span><input data-c="label" value="${esc(y.label || '')}" placeholder="e.g. Recurrent, medical, PC"></label><label class="field"><span>Applies to</span>${sel('', [['', 'All flying'], ...types().map(t => [t, t])], y.type || '', 'data-c="type"')}</label><label class="field"><span>Expires</span><input type="date" data-c="expires" value="${esc(y.expires || '')}"></label><button type="button" class="btn sm ghost" data-rmcur aria-label="Remove item">✕</button></div>`;
 
 async function crewForm(c) {
-  const x = c ? clone(c) : { id: uid('c'), name: '', empId: '', group: S.dept.groups[0]?.name || 'Pilots', seniority: S.crew.length + 1, hireDate: TODAY, quals: [], currency: [], targetDays: 16, allot: {}, prefs: { weekendsOff: false, note: '' }, status: 'active', contract: false, checkAirman: false, peerObserver: false, priorQuarterHrs: 0, priorYearHrs: 0 };
-  const res = await modal(c ? `Edit ${c.name}` : 'Add crew member', `<div class="form-grid"><label class="field"><span>Name</span><input name="name" value="${esc(x.name)}"></label><label class="field"><span>Employee ID</span><input name="empId" value="${esc(x.empId)}"></label><label class="field"><span>Group</span>${sel('group', S.dept.groups.map(g => [g.name, g.name]), x.group)}</label><label class="field"><span>Seniority # (1 = most senior)</span><input type="number" name="seniority" min="1" value="${x.seniority}"></label><label class="field"><span>Hire date</span><input type="date" name="hireDate" value="${x.hireDate}"></label><label class="field"><span>Target work days per 30</span><input type="number" name="targetDays" min="0" max="30" value="${x.targetDays}"></label><label class="field"><span>Status</span>${sel('status', [['active', 'Active'], ['inactive', 'Inactive']], x.status)}</label><label class="field"><span>Prior flight hours this quarter</span><input type="number" name="priorQuarterHrs" min="0" value="${x.priorQuarterHrs || 0}"></label></div>
-    <label class="field"><span>Qualifications (TYPE:SEAT, comma separated)</span><input name="quals" value="${esc(qStr(x))}" placeholder="G280:PIC, G550:SIC, AW139:PIC"><small>Known types: ${esc(types().join(', ') || 'add aircraft first')}. A pilot can hold different seats on different types.</small></label>
-    <label class="field"><span>Currency items (one per line: label | type or blank for all duty | expiry YYYY-MM-DD)</span><textarea name="currency" rows="3">${esc((x.currency || []).map(y => `${y.label} | ${y.type || ''} | ${y.expires}`).join('\n'))}</textarea></label>
-    <label class="field"><span>Individual allotments (CODE=days, comma separated; blank uses category default)</span><input name="allot" value="${esc(Object.entries(x.allot || {}).map(([k, v]) => `${k}=${v}`).join(', '))}"></label>
-    <label class="field"><span>Preference note</span><input name="note" value="${esc(x.prefs?.note || '')}"></label>
-    <div class="row"><label class="check"><input type="checkbox" name="contract" ${x.contract ? 'checked' : ''}> Contract crew</label><label class="check"><input type="checkbox" name="weekendsOff" ${x.prefs?.weekendsOff ? 'checked' : ''}> Prefers weekends off</label></div>
-    <div class="row"><label class="check"><input type="checkbox" name="checkAirman" ${x.checkAirman ? 'checked' : ''}> Standards Captain / Check Airman</label><label class="check"><input type="checkbox" name="peerObserver" ${x.peerObserver ? 'checked' : ''}> Peer Observer</label></div><small class="muted">Only flagged crew can be assigned as line-check observers. Observation days count as flight work days and remove the observer from the coverage pool.</small>`, {
-    wide: true, actions: [...(c ? [{ label: 'Delete', value: 'delete', kind: 'danger' }] : []), { label: 'Cancel', value: null, kind: 'ghost' }, { label: 'Save', kind: 'primary', validate: el => !$('[name=name]', el).value.trim() ? 'Name is required.' : null, collect: el => formData(el) }],
+  const x = c ? clone(c) : { id: uid('c'), name: '', empId: '', group: S.dept.groups.find(g => g.kind === 'seat')?.name || S.dept.groups[0]?.name || 'Pilots', seniority: S.crew.length + 1, hireDate: TODAY, quals: [], currency: [], targetDays: 16, allot: {}, prefs: { weekendsOff: false, note: '' }, status: 'active', contract: false, checkAirman: false, peerObserver: false, priorQuarterHrs: 0, priorYearHrs: 0 };
+  const tys = types();
+  const body = `<div class="form-grid"><label class="field"><span>Name</span><input name="name" value="${esc(x.name)}" autocomplete="off" required></label><label class="field"><span>Group</span>${sel('group', S.dept.groups.map(g => [g.name, g.name]), x.group)}</label><label class="field"><span>Seniority number</span><input type="number" name="seniority" min="1" value="${x.seniority}"><small>1 = most senior.</small></label><label class="field"><span>Status</span>${sel('status', [['active', 'Active'], ['inactive', 'Inactive']], x.status)}</label></div>
+    <section class="fsec" id="qsec" ${isSeatGroup(x.group) ? '' : 'hidden'}><h3>Aircraft qualifications</h3>${tys.length ? `<p class="muted">Choose the seat this person can fly on each type. Leave “Not qualified” for types they don’t fly.</p><div class="qual-grid">${tys.map(t => `<label class="field"><span>${esc(t)}</span>${sel('', SEAT_OPTS, seatOf(x, t), `data-q="${esc(t)}"`)}</label>`).join('')}</div>` : '<p class="muted">No aircraft yet. Add aircraft under Setup → Aircraft, then come back to set qualifications.</p>'}</section>
+    <section class="fsec"><h3>Training and currency <small class="muted">(optional)</small></h3><p class="muted">Items that must be current to fly. The schedule warns before they expire.</p><div id="curList">${(x.currency || []).map(curRow).join('')}</div><button type="button" class="btn sm" data-addcur>Add item</button></section>
+    ${balCats().length ? `<section class="fsec"><h3>Time-off allowances <small class="muted">(optional)</small></h3><p class="muted">Leave blank to use the department default.</p><div class="form-grid">${balCats().map(k => `<label class="field"><span>${esc(k.name)} (${esc(k.code)})</span><input type="number" min="0" data-al="${esc(k.code)}" value="${x.allot?.[k.code] ?? ''}" placeholder="Default ${k.balance.amount}"><small>days per ${k.balance.period}</small></label>`).join('')}</div></section>` : ''}
+    <section class="fsec"><h3>Roles and preferences</h3><div class="checks"><label class="check"><input type="checkbox" name="contract" ${x.contract ? 'checked' : ''}> Contract crew</label><label class="check"><input type="checkbox" name="weekendsOff" ${x.prefs?.weekendsOff ? 'checked' : ''}> Prefers weekends off</label><label class="check"><input type="checkbox" name="checkAirman" ${x.checkAirman ? 'checked' : ''}> Standards Captain / Check Airman</label><label class="check"><input type="checkbox" name="peerObserver" ${x.peerObserver ? 'checked' : ''}> Peer Observer</label></div><small class="muted">Only Standards Captains and Peer Observers can be assigned as line-check observers.</small>
+    <label class="field" style="margin-top:10px"><span>Notes for the scheduler</span><input name="note" value="${esc(x.prefs?.note || '')}" placeholder="e.g. prefers early starts"></label></section>
+    <details class="fsec"><summary>More details</summary><div class="form-grid" style="margin-top:8px"><label class="field"><span>Employee ID</span><input name="empId" value="${esc(x.empId)}"></label><label class="field"><span>Hire date</span><input type="date" name="hireDate" value="${x.hireDate}"></label><label class="field"><span>Target work days per 30</span><input type="number" name="targetDays" min="0" max="30" value="${x.targetDays}"><small>The roster tries to give each person about this many work days.</small></label><label class="field"><span>Flight hours so far this quarter</span><input type="number" name="priorQuarterHrs" min="0" value="${x.priorQuarterHrs || 0}"><small>Used for Part 135 quarterly limits.</small></label></div></details>`;
+  const res = await modal(c ? `Edit ${c.name}` : 'Add crew member', body, {
+    wide: true,
+    onOpen: card => {
+      $('[name=group]', card).onchange = e => { $('#qsec', card).hidden = !isSeatGroup(e.target.value); };
+      card.addEventListener('click', e => {
+        if (e.target.closest('[data-addcur]')) { $('#curList', card).insertAdjacentHTML('beforeend', curRow()); $('#curList [data-cur]:last-child input', card)?.focus(); }
+        const rm = e.target.closest('[data-rmcur]'); if (rm) rm.closest('[data-cur]').remove();
+      });
+    },
+    actions: [...(c ? [{ label: 'Delete', value: 'delete', kind: 'danger' }] : []), { label: 'Cancel', value: null, kind: 'ghost' }, { label: 'Save', kind: 'primary',
+      validate: el => !$('[name=name]', el).value.trim() ? 'Enter a name.' : $$('[data-cur]', el).some(r => $('[data-c=label]', r).value.trim() && !$('[data-c=expires]', r).value) ? 'Add an expiry date for each training item, or remove it.' : null,
+      collect: el => ({ ...formData(el), quals: $$('[data-q]', el).filter(s => s.value).map(s => ({ type: s.dataset.q, seat: s.value })), currency: $$('[data-cur]', el).map(r => ({ label: $('[data-c=label]', r).value.trim(), type: $('[data-c=type]', r).value || null, expires: $('[data-c=expires]', r).value })).filter(y => y.label && y.expires), allot: Object.fromEntries($$('[data-al]', el).filter(i => i.value !== '').map(i => [i.dataset.al, Number(i.value)])) }) }],
   });
   if (!res) return;
   if (res === 'delete') { const used = S.trips.some(t => t.crew.pic === c.id || t.crew.sic === c.id || t.crew.obs === c.id) || S.requests.some(r => r.crewId === c.id) || (S.observations || []).some(o => o.crewId === c.id); if (used) { c.status = 'inactive'; audit('Crew deactivated', c.name); toast('Has history — marked inactive instead of deleted'); } else { S.crew = S.crew.filter(y => y.id !== c.id); audit('Crew removed', c.name); } save(); return; }
-  Object.assign(x, { name: res.name.trim(), empId: res.empId, group: res.group, seniority: Number(res.seniority) || 1, hireDate: res.hireDate, targetDays: Number(res.targetDays) || 0, status: res.status, priorQuarterHrs: Number(res.priorQuarterHrs) || 0, contract: res.contract, checkAirman: !!res.checkAirman, peerObserver: !!res.peerObserver, quals: parseQ(res.quals), prefs: { weekendsOff: res.weekendsOff, note: res.note } });
-  x.currency = res.currency.split('\n').map(l => l.split('|').map(s => s.trim())).filter(p => p[0] && /^\d{4}-\d{2}-\d{2}$/.test(p[2] || '')).map(([label, type, expires]) => ({ label, type: type ? type.toUpperCase() : null, expires }));
-  x.allot = Object.fromEntries(res.allot.split(',').map(s => s.split('=').map(y => y.trim())).filter(([k, v]) => k && v !== undefined && v !== '').map(([k, v]) => [k.toUpperCase(), Number(v)]));
+  const keepOther = x.quals.filter(q => !tys.includes(q.type)); // qualifications on types no longer in the fleet are kept
+  Object.assign(x, { name: res.name.trim(), empId: res.empId || '', group: res.group, seniority: Number(res.seniority) || 1, hireDate: res.hireDate || TODAY, targetDays: Number(res.targetDays) || 0, status: res.status, priorQuarterHrs: Number(res.priorQuarterHrs) || 0, contract: !!res.contract, checkAirman: !!res.checkAirman, peerObserver: !!res.peerObserver, quals: isSeatGroup(res.group) ? [...res.quals, ...keepOther] : [], currency: res.currency, allot: res.allot, prefs: { weekendsOff: !!res.weekendsOff, note: res.note || '' } });
   if (c) Object.assign(c, x); else S.crew.push(x);
   audit(c ? 'Crew edited' : 'Crew added', `${x.name} (${x.group}) ${qStr(x)}`); save();
+  toast(c ? `${x.name} updated` : `${x.name} added`);
 }
 
-async function bulkImport() {
-  const sample = 'name,group,seniority,quals,targetDays,contract,checkAirman,peerObserver\nSam Ortiz,Pilots,15,G280:PIC G550:SIC,16,no,no,yes\nLee Park,Maintenance,16,,20,no,no,no';
-  const res = await modal('Bulk import crew', `<p>Paste CSV with a header row. Columns: <code>name, group, seniority, quals, targetDays, contract, checkAirman, peerObserver</code> (the last two optional, yes/no). Quals are TYPE:SEAT separated by spaces. Unknown groups are created as count groups.</p><textarea id="csvIn" rows="8" style="width:100%;font-family:var(--mono)">${esc(sample)}</textarea><div id="prev" class="muted"></div>`, {
-    wide: true, onOpen: card => { const p = () => { const rows = parseCsv($('#csvIn', card).value); $('#prev', card).textContent = `${Math.max(0, rows.length - 1)} row(s) detected`; }; card.oninput = p; p(); },
-    actions: [{ label: 'Cancel', value: null, kind: 'ghost' }, { label: 'Import', kind: 'primary', collect: card => $('#csvIn', card).value }],
+// Add several people at once: a simple form with one row per person. Paste a list of names, or import a spreadsheet.
+const H_ALIASES = { name: ['name', 'full name', 'crew', 'pilot', 'employee'], group: ['group', 'department', 'role', 'position'], seniority: ['seniority', 'seniority #', 'seniority number', 'rank'], empId: ['employee id', 'emp id', 'empid', 'id', 'employee #'], quals: ['quals', 'qualifications', 'types', 'aircraft'], contract: ['contract', 'contractor'] };
+function addRow(p = {}) {
+  const tys = types(); const g = p.group || S.dept.groups.find(x => x.kind === 'seat')?.name || S.dept.groups[0]?.name || 'Pilots';
+  return `<div class="bulk-row" data-br><label class="field"><span>Name</span><input data-b="name" value="${esc(p.name || '')}" autocomplete="off"></label><label class="field"><span>Group</span>${sel('', [...S.dept.groups.map(x => [x.name, x.name]), ...(S.dept.groups.some(x => x.name === g) ? [] : [[g, `${g} (new group)`]])], g, 'data-b="group"')}</label>${tys.map(t => `<label class="field bq" ${isSeatGroup(g) ? '' : 'hidden'}><span>${esc(t)}</span>${sel('', [['', '—'], ['PIC', 'PIC'], ['SIC', 'SIC']], p.quals?.find(q => q.type === t)?.seat || '', `data-bq="${esc(t)}"`)}</label>`).join('')}<label class="check"><input type="checkbox" data-b="contract" ${p.contract ? 'checked' : ''}> Contract</label><button type="button" class="btn sm ghost" data-rmrow aria-label="Remove row">✕</button></div>`;
+}
+const splitLine = l => l.includes('\t') ? l.split('\t') : parseCsv(l + '\n')[0] || [l];
+function parsePasted(text) {
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean); if (!lines.length) return [];
+  const first = splitLine(lines[0]).map(h => h.trim().toLowerCase());
+  const col = k => first.findIndex(h => H_ALIASES[k].includes(h));
+  const hasHead = col('name') >= 0;
+  const ix = hasHead ? Object.fromEntries(Object.keys(H_ALIASES).map(k => [k, col(k)])) : { name: 0, group: -1, seniority: -1, empId: -1, quals: -1, contract: -1 };
+  return (hasHead ? lines.slice(1) : lines).map(l => { const r = splitLine(l).map(v => v.trim()); const v = k => ix[k] >= 0 ? r[ix[k]] || '' : '';
+    const group = S.dept.groups.find(g => g.name.toLowerCase() === v('group').toLowerCase())?.name || v('group');
+    return { name: v('name'), group, seniority: Number(v('seniority')) || null, empId: v('empId'), contract: /^(y|yes|true|1|x)$/i.test(v('contract')), quals: v('quals') ? parseQ(v('quals')) : [] }; }).filter(p => p.name);
+}
+async function bulkAdd() {
+  const tys = types();
+  const res = await modal('Add several people', `<p class="muted">Fill in one row per person. Seniority follows the order of the rows${S.crew.length ? `, after your current ${S.crew.length} crew` : ''}. You can add training items and other details later with Edit.</p>
+    <details class="fsec"><summary>Paste a list instead</summary><p class="muted">Paste names, one per line — or copy rows straight from Excel or Google Sheets. If the first row has headings such as Name, Group, Seniority, Employee ID or Aircraft, those columns are used too.</p><textarea id="paste" rows="4" placeholder="Sam Ortiz&#10;Lee Park&#10;Jordan Avery"></textarea><div class="row"><button type="button" class="btn sm" data-paste>Fill rows from list</button><label class="btn sm ghost">Open a spreadsheet file (.csv)<input type="file" id="csvFile" accept=".csv,text/csv" hidden></label></div></details>
+    ${tys.length ? '' : '<p class="alert info">No aircraft yet, so pilot qualifications can be added later.</p>'}
+    <div id="rows">${[0, 1, 2, 3, 4].map(() => addRow()).join('')}</div><button type="button" class="btn sm" data-more>Add another row</button>`, {
+    wide: true,
+    onOpen: card => {
+      const rows = $('#rows', card);
+      const fill = list => { if (!list.length) return toast('No names found in that list.', 'bad'); $$('[data-br]', rows).filter(r => !$('[data-b=name]', r).value.trim()).forEach(r => r.remove()); rows.insertAdjacentHTML('beforeend', list.map(addRow).join('')); toast(`${list.length} row(s) added — check groups and qualifications, then Add`); };
+      card.addEventListener('click', e => {
+        if (e.target.closest('[data-more]')) { rows.insertAdjacentHTML('beforeend', addRow()); $('[data-br]:last-child input', rows)?.focus(); }
+        const rm = e.target.closest('[data-rmrow]'); if (rm) rm.closest('[data-br]').remove();
+        if (e.target.closest('[data-paste]')) fill(parsePasted($('#paste', card).value));
+      });
+      card.addEventListener('change', e => { if (e.target.dataset.b === 'group') { const show = isSeatGroup(e.target.value); $$('.bq', e.target.closest('[data-br]')).forEach(l => l.hidden = !show); } });
+      $('#csvFile', card).onchange = async e => { const f = e.target.files[0]; if (f) fill(parsePasted(await f.text())); };
+    },
+    actions: [{ label: 'Cancel', value: null, kind: 'ghost' }, { label: 'Add people', kind: 'primary',
+      validate: card => $$('[data-br]', card).some(r => $('[data-b=name]', r).value.trim()) ? null : 'Enter at least one name.',
+      collect: card => $$('[data-br]', card).map(r => ({ name: $('[data-b=name]', r).value.trim(), group: $('[data-b=group]', r).value, contract: $('[data-b=contract]', r).checked, quals: $$('[data-bq]', r).filter(s => s.value && !s.closest('.bq').hidden).map(s => ({ type: s.dataset.bq, seat: s.value })) })).filter(p => p.name) }],
   });
   if (!res) return;
-  const rows = parseCsv(res); const head = rows.shift()?.map(h => h.trim().toLowerCase()) || []; const ix = k => head.indexOf(k); let n = 0;
-  for (const r of rows) {
-    const name = r[ix('name')]?.trim(); if (!name) continue; const group = r[ix('group')]?.trim() || 'Pilots';
-    if (!S.dept.groups.some(g => g.name === group)) S.dept.groups.push({ name: group, kind: 'count', minOnDuty: 1 });
-    S.crew.push({ id: uid('c'), name, empId: '', group, seniority: Number(r[ix('seniority')]) || S.crew.length + 1, hireDate: TODAY, quals: parseQ(r[ix('quals')] || ''), currency: [], targetDays: Number(r[ix('targetdays')]) || 16, allot: {}, prefs: { weekendsOff: false, note: '' }, status: 'active', contract: /^y/i.test(r[ix('contract')] || ''), checkAirman: /^y/i.test(r[ix('checkairman')] || ''), peerObserver: /^y/i.test(r[ix('peerobserver')] || ''), priorQuarterHrs: 0, priorYearHrs: 0 }); n++;
+  let seq = Math.max(0, ...S.crew.map(c => c.seniority || 0));
+  for (const p of res) {
+    if (!S.dept.groups.some(g => g.name === p.group)) S.dept.groups.push({ name: p.group, kind: 'count', minOnDuty: 1 });
+    S.crew.push({ id: uid('c'), name: p.name, empId: '', group: p.group, seniority: ++seq, hireDate: TODAY, quals: p.quals, currency: [], targetDays: 16, allot: {}, prefs: { weekendsOff: false, note: '' }, status: 'active', contract: p.contract, checkAirman: false, peerObserver: false, priorQuarterHrs: 0, priorYearHrs: 0 });
   }
-  audit('Crew bulk import', `${n} row(s)`); save(); toast(`Imported ${n} crew`);
+  audit('Crew added', `${res.length} people`); save(); toast(`Added ${res.length} ${res.length === 1 ? 'person' : 'people'}`);
 }
 
 async function downtime(a) {

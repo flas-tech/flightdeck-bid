@@ -34,3 +34,26 @@ export function printDoc(title, html) {
 }
 export const who = id => esc(crewName(id));
 export const dl = s => esc(D.label(s));
+
+// ---------------------------------------------------------------- award method fields (shared by Setup and Bids)
+const METHOD_HELP = {
+  seniority: 'Most senior first. Familiar and easy to audit; junior crew rarely get the popular dates.',
+  lottery: 'Random order each bid period. Everyone has the same chance.',
+  rotating: 'First pick moves down the seniority list by one each period, so everyone gets a turn.',
+  points: 'Whoever has had the fewest requests honored goes first. Corrects itself over time.',
+};
+export function awardMethodFields(METHODS, firstPick) {
+  const m = S.dept.bidMethod;
+  return `<div class="am"><label class="field"><span>Award method</span><select id="am-meth">${Object.entries(METHODS).map(([k, l]) => `<option value="${k}" ${k === m ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select><small>${esc(METHOD_HELP[m] || '')} <a href="#/guide">Compare methods</a></small></label>
+  ${m === 'lottery' ? `<div class="field"><label for="am-seed"><span>Lottery draw code</span></label><div class="row nowrap"><input id="am-seed" value="${esc(S.dept.lotterySeed || '')}" maxlength="40"><button type="button" class="btn" data-am="draw">New draw</button></div><small>The draw code shuffles the crew list into a random order. The same code always gives the same order, so post it with the results and anyone can check the draw. Use a new code each bid period, for example the month. <a href="#/guide">More about the lottery</a></small></div>` : ''}
+  ${m === 'rotating' ? `<div class="field"><span class="lbl">This period’s first pick</span><div class="row nowrap"><strong>${esc(firstPick || '—')}</strong><button type="button" class="btn sm" data-am="next">Advance to next period</button></div><small>Press Advance once at the start of each bid period so first pick moves to the next person. Position ${Number(S.dept.rotationIndex) || 0} in seniority order (0 = most senior).</small></div>` : ''}</div>`;
+}
+export function bindAwardMethod(box, { save, audit, METHODS, rerender }) {
+  box.querySelector('#am-meth')?.addEventListener('change', e => { S.dept.bidMethod = e.target.value; audit('Bid method changed', METHODS[e.target.value]); save(); rerender?.(); });
+  box.querySelector('#am-seed')?.addEventListener('change', e => { S.dept.lotterySeed = e.target.value.trim(); audit('Lottery draw code changed', S.dept.lotterySeed); save(); rerender?.(); });
+  box.querySelectorAll('[data-am]').forEach(b => b.addEventListener('click', () => {
+    if (b.dataset.am === 'draw') { const code = `${new Date().toISOString().slice(0, 7)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`; S.dept.lotterySeed = code; audit('New lottery draw', code); }
+    if (b.dataset.am === 'next') { S.dept.rotationIndex = (Number(S.dept.rotationIndex) || 0) + 1; audit('Rotation advanced', `Position ${S.dept.rotationIndex}`); }
+    save(); rerender?.();
+  }));
+}

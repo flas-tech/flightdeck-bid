@@ -28,7 +28,7 @@ async function refresh() {
   if (!sb) { acct.ready = true; emit(); return; }
   const { data: { session } } = await sb.auth.getSession();
   acct.user = session?.user || null;
-  if (!acct.user) { Object.assign(acct, { profile: null, listedAdmin: false, aal: 'aal1', hasFactor: false, depts: [], ready: true }); emit(); return; }
+  if (!acct.user) { lastSig = ''; Object.assign(acct, { profile: null, listedAdmin: false, aal: 'aal1', hasFactor: false, depts: [], ready: true }); emit(); return; }
   const [{ data: prof }, { data: adm }, { data: aal }, { data: depts }] = await Promise.all([
     sb.from('profiles').select('*').eq('id', acct.user.id).maybeSingle(),
     sb.rpc('am_admin'),
@@ -36,8 +36,12 @@ async function refresh() {
     sb.rpc('my_departments'),
   ]);
   acct.profile = prof || null; acct.listedAdmin = !!adm; acct.aal = aal?.currentLevel || 'aal1'; acct.hasFactor = aal?.nextLevel === 'aal2' || acct.aal === 'aal2'; acct.depts = depts || []; acct.ready = true;
+  // Only redraw when something actually changed (session refreshes on returning to the tab are common).
+  const sig = JSON.stringify([acct.user.id, acct.profile, acct.listedAdmin, acct.aal, acct.hasFactor, acct.depts.map(d => [d.id, d.name, d.role, d.status, d.crew_id, d.members])]);
+  if (sig === lastSig) return; lastSig = sig;
   emit();
 }
+let lastSig = '';
 export async function initAccount() {
   if (!sb) { acct.ready = true; return; }
   sb.auth.onAuthStateChange((ev) => { if (['SIGNED_IN', 'SIGNED_OUT', 'MFA_CHALLENGE_VERIFIED', 'USER_UPDATED'].includes(ev)) setTimeout(refresh, 0); });
@@ -105,16 +109,29 @@ export async function updateFeedback(id, status, reply) { const { data, error } 
 export async function claimAdmin(code) { const { error } = await sb.rpc('claim_admin', { p_code: code }); if (error) throw error; await refresh(); }
 
 // ---- two-factor for admins
-export async function mfaEnroll() {
+// A pending (not yet verified) authenticator setup is kept in this browser, so leaving the page to open an
+// authenticator app — or the page redrawing when the session refreshes — never replaces the key.
+const MFA_KEY = 'sc-mfa-pending';
+export function mfaPending() {
+  try { const p = JSON.parse(localStorage.getItem(MFA_KEY) || 'null'); if (p && p.user === acct.user?.id && Date.now() - p.at < 24 * 3600e3) return p; } catch { /* ignore */ }
+  return null;
+}
+export function mfaClearPending() { localStorage.removeItem(MFA_KEY); }
+export async function mfaEnroll({ fresh = false } = {}) {
   const { data: lf } = await sb.auth.mfa.listFactors();
-  for (const f of (lf?.all) || []) if (f.status !== 'verified') await sb.auth.mfa.unenroll({ factorId: f.id });
-  const { data, error } = await sb.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'Schedule Captain ' + new Date().toISOString().slice(0, 10) });
-  if (error) throw error; return data;
+  const unverified = ((lf?.all) || []).filter(f => f.status !== 'verified');
+  const keep = !fresh && mfaPending();
+  if (keep && unverified.some(f => f.id === keep.id)) return keep;
+  for (const f of unverified) await sb.auth.mfa.unenroll({ factorId: f.id });
+  const { data, error } = await sb.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'Schedule Captain ' + new Date().toISOString().slice(0, 19).replace('T', ' ') });
+  if (error) throw error;
+  const p = { user: acct.user.id, id: data.id, secret: data.totp.secret, qr: data.totp.qr_code, uri: data.totp.uri, at: Date.now() };
+  localStorage.setItem(MFA_KEY, JSON.stringify(p)); return p;
 }
 export async function mfaVerify(code, factorId) {
   if (!factorId) { const { data: lf } = await sb.auth.mfa.listFactors(); factorId = lf?.totp?.find(f => f.status === 'verified')?.id; }
   if (!factorId) throw new Error('No authenticator is set up yet.');
   const { error } = await sb.auth.mfa.challengeAndVerify({ factorId, code: code.trim() });
   if (error) throw new Error('That code did not match. Check the time on your phone and try the next code.');
-  await refresh();
+  mfaClearPending(); await refresh();
 }

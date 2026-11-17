@@ -17,6 +17,7 @@ import * as observersView from './views/observers.js';
 import * as fb from './views/feedback.js';
 import { acct, ctx, initAccount, onAccount, signedIn, displayName, signOut, isAdmin, MEMBER_ROLES, APP_ROLE, fetchDept, createDept, queueDeptSave, flushDept, onDeptConflict, deptVersion, hasPendingSave, onDeptSaveError, inviteInfo, acceptInvite, friendly } from './account.js';
 import * as team from './views/team.js';
+import * as guide from './views/guide.js';
 import { setState } from './store.js';
 import { APP_VERSION } from './releases.js';
 import { PRODUCT } from './config.js';
@@ -39,6 +40,7 @@ const ROUTES = {
   departments: { label: 'Departments', view: { render: team.renderDepartments }, ok: () => acct.listedAdmin, grp: 'Schedule Captain team' },
   users: { label: 'Users', view: { render: team.renderUsers }, ok: () => acct.listedAdmin, grp: 'Schedule Captain team' },
   inbox: { label: 'App feedback', view: { render: fb.renderInbox }, ok: () => acct.listedAdmin, grp: 'Schedule Captain team', count: () => fb.inboxNew },
+  guide: { label: 'Staffing & bidding guide', view: guide, ok: () => true, grp: 'Help' },
   whatsnew: { label: 'What’s new', view: { render: fb.renderWhatsNew }, ok: () => true, grp: 'Help', badge: () => fb.updatedChip() ? 'New' : '' },
   feedback: { label: 'Send feedback', view: { render: fb.renderSend }, ok: () => true, grp: 'Help' },
   account: { label: 'Account', view: { render: fb.renderAccount }, ok: () => true, grp: 'Help' },
@@ -223,3 +225,12 @@ function boot() {
   chooser();
 }
 boot();
+
+// Label editable table cells so they can stack as cards on phones (see table.edit-stack in styles.css).
+function labelEditTables() {
+  document.querySelectorAll('table.edit-stack').forEach(t => {
+    const heads = [...t.querySelectorAll('thead th')].map(th => th.textContent.trim());
+    t.querySelectorAll('tbody tr').forEach(tr => [...tr.children].forEach((td, i) => { if (!td.dataset.l && heads[i]) td.dataset.l = heads[i]; }));
+  });
+}
+new MutationObserver(labelEditTables).observe(document.body, { childList: true, subtree: true });

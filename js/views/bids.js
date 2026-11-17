@@ -2,7 +2,7 @@ import { esc, D, uid } from '../util.js';
 import { S, session, can, save, audit, notify, TODAY, crewById, crewName, activeCrew, isLocked, lockEnd } from '../store.js';
 import { awardBids, applyBidAward, compareMethods, METHODS, orderCrew, rosterCode, isWork } from '../engine.js';
 import { $, $$, modal, toast, statusBadge, sel, tabs, empty, badge, confirm } from '../ui.js';
-import { crewOpts } from './common.js';
+import { crewOpts, awardMethodFields, bindAwardMethod } from './common.js';
 
 const ui = { tab: null };
 const typeLabel = b => b.type === 'off' ? 'Prefer off (no leave used)' : b.type === 'work' ? 'Prefer to work' : 'Swap';
@@ -20,15 +20,11 @@ export function render(el) {
   if (ui.tab === 'all') box.innerHTML = S.bids.length ? `<div class="list">${[...S.bids].sort((a, b) => a.date.localeCompare(b.date)).map(b => bidCard(b)).join('')}</div>` : empty('No bids.');
   if (ui.tab === 'award') {
     const order = orderCrew(S.dept.bidMethod, [...new Set(S.bids.filter(b => b.status === 'open').map(b => b.crewId))]);
-    box.innerHTML = `<div class="card"><div class="form-grid"><label class="field"><span>Award method</span>${sel('m', Object.entries(METHODS), S.dept.bidMethod, 'id="meth"')}</label>
-      <label class="field"><span>Lottery seed (reproducible)</span><input id="seed" value="${esc(S.dept.lotterySeed)}"></label>
-      <label class="field"><span>Rotation index</span><input id="rot" type="number" value="${S.dept.rotationIndex}"></label></div>
+    box.innerHTML = `<div class="card">${awardMethodFields(METHODS, crewName(orderCrew('rotating', activeCrew().map(c => c.id))[0]))}
       <p class="muted">Bids are awarded in rounds: each person's rank-1 bid in method order, then rank-2, and so on. Seniority ${S.dept.seniorityTieBreaker ? 'breaks ties' : 'is not used as a tie-breaker'}; contract crew go ${S.dept.contractLast ? 'last' : 'in normal order'}.</p>
       <p><strong>Current order:</strong> ${order.length ? order.map((id, i) => `${i + 1}. ${esc(crewName(id))}`).join(' · ') : '<span class="muted">no open bids</span>'}</p>
       <button class="btn primary" data-a="run">Run award (preview)</button></div><div id="res"></div>`;
-    $('#meth', box).onchange = e => { S.dept.bidMethod = e.target.value; audit('Bid method changed', METHODS[e.target.value]); save(); };
-    $('#seed', box).onchange = e => { S.dept.lotterySeed = e.target.value; audit('Lottery seed changed', e.target.value); save(); };
-    $('#rot', box).onchange = e => { S.dept.rotationIndex = Number(e.target.value) || 0; save(); };
+    bindAwardMethod(box, { save, audit, METHODS });
   }
   if (ui.tab === 'compare') {
     const cmp = compareMethods(); const crewIds = [...new Set(cmp.flatMap(c => Object.keys(c.per)))];

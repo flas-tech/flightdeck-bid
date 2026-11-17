@@ -1,7 +1,7 @@
 // Account, Send feedback, admin App feedback inbox and What's new.
 import { esc } from '../util.js';
 import { S, session } from '../store.js';
-import { acct, signedIn, isAdmin, displayName, signIn, signUp, signOut, updateProfile, sendFeedback, myFeedback, allFeedback, updateFeedback, claimAdmin, mfaEnroll, mfaVerify, friendly, changePassword, ctx, MEMBER_ROLES, removeMember, refreshAccount } from '../account.js';
+import { acct, signedIn, isAdmin, displayName, signIn, signUp, signOut, updateProfile, sendFeedback, myFeedback, allFeedback, updateFeedback, claimAdmin, mfaEnroll, mfaVerify, mfaPending, friendly, changePassword, ctx, MEMBER_ROLES, removeMember, refreshAccount } from '../account.js';
 import { APP_VERSION, RELEASES, unseen, markSeen, seenVer, cmpVer } from '../releases.js';
 import { PRODUCT } from '../config.js';
 import { $, $$, modal, close, toast, badge, empty, confirm } from '../ui.js';
@@ -97,14 +97,25 @@ export async function renderSend(el) {
 // ---------------------------------------------------------------- Admin: two-factor gate
 export function mfaGate(el, then) {
   if (!acct.hasFactor) {
-    el.innerHTML = `<div class="page-head"><div><h1>Set up two-factor sign-in</h1><p>Admin tools (feedback and user support) require an authenticator app.</p></div></div><div class="card" id="mf"><button class="btn primary" data-a="enroll">Set up authenticator</button></div>`;
-    $('[data-a="enroll"]', el).onclick = async () => {
-      try { const d = await mfaEnroll();
-        $('#mf', el).innerHTML = `<p>Scan this code with an authenticator app such as Google Authenticator, Microsoft Authenticator, 1Password or Authy.</p><div class="qr"><img alt="QR code for authenticator app" src="${esc(d.totp.qr_code)}" width="200" height="200"></div><details><summary>Can’t scan? Enter this key instead</summary><code class="secret">${esc(d.totp.secret)}</code></details>
-          <form id="mv" class="row" style="margin-top:12px"><label class="field" style="margin:0"><span>6-digit code</span><input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></label><button class="btn primary" type="submit">Verify</button></form>`;
-        $('#mv', el).onsubmit = async e => { e.preventDefault(); try { await mfaVerify(e.target.code.value, d.id); toast('Two-factor sign-in is on'); then(); } catch (ex) { toast(friendly(ex), 'bad'); } };
-      } catch (ex) { toast(friendly(ex), 'bad'); }
+    const head = `<div class="page-head"><div><h1>Set up two-factor sign-in</h1><p>Admin tools require an authenticator app such as Google Authenticator, Microsoft Authenticator, 1Password or Authy.</p></div></div>`;
+    const showKey = d => {
+      el.innerHTML = `${head}<div class="card mfa-setup"><ol class="mfa-steps">
+        <li><strong>Add the key to your authenticator.</strong> On this phone, tap <strong>Open in authenticator app</strong>, or copy the key and paste it in. On a computer, scan the QR code with your phone.</li>
+        <li><strong>Come back here</strong> — this key stays the same until you finish, even if you leave the page or reload it.</li>
+        <li><strong>Enter the 6-digit code</strong> your app shows.</li></ol>
+        <div class="row"><a class="btn primary" href="${esc(d.uri || '')}">Open in authenticator app</a><button type="button" class="btn" data-a="copy">Copy key</button></div>
+        <p style="margin:10px 0 4px"><span class="muted">Setup key</span><br><code class="secret" id="mfaKey">${esc(d.secret)}</code></p>
+        <details><summary>Show QR code (to scan from another device)</summary><div class="qr"><img alt="QR code for authenticator app" src="${esc(d.qr)}" width="200" height="200"></div></details>
+        <form id="mv" class="row" style="margin-top:12px;align-items:flex-end"><label class="field" style="margin:0"><span>6-digit code</span><input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></label><button class="btn primary" type="submit">Verify</button></form>
+        <p class="muted" style="margin-bottom:0">Lost the key? <a href="#" data-a="restart">Start over with a new key</a> (remove the old Schedule Captain entry from your app first).</p></div>`;
+      $('[data-a="copy"]', el).onclick = async () => { try { await navigator.clipboard.writeText(d.secret); toast('Key copied — paste it into your authenticator app'); } catch { const r = document.createRange(); r.selectNodeContents($('#mfaKey', el)); getSelection().removeAllRanges(); getSelection().addRange(r); toast('Key selected — copy it', 'bad'); } };
+      $('[data-a="restart"]', el).onclick = async e => { e.preventDefault(); if (!(await confirm('Start over with a new key', 'The current key will stop working. Remove the old Schedule Captain entry from your authenticator app, then add the new key.', 'New key', 'danger'))) return; try { showKey(await mfaEnroll({ fresh: true })); } catch (ex) { toast(friendly(ex), 'bad'); } };
+      $('#mv', el).onsubmit = async e => { e.preventDefault(); const b = $('button[type=submit]', e.target); b.disabled = true; try { await mfaVerify(e.target.code.value, d.id); toast('Two-factor sign-in is on'); then(); } catch (ex) { toast(friendly(ex), 'bad'); b.disabled = false; } };
     };
+    const pending = mfaPending();
+    if (pending) return showKey(pending);
+    el.innerHTML = `${head}<div class="card" id="mf"><p>You’ll add a setup key to your authenticator app, then enter the 6-digit code it shows. The key stays the same until you finish, so it’s fine to switch apps.</p><button class="btn primary" data-a="enroll">Set up authenticator</button></div>`;
+    $('[data-a="enroll"]', el).onclick = async e => { e.target.disabled = true; e.target.textContent = 'Creating key…'; try { showKey(await mfaEnroll()); } catch (ex) { toast(friendly(ex), 'bad'); e.target.disabled = false; e.target.textContent = 'Set up authenticator'; } };
     return;
   }
   el.innerHTML = `<div class="page-head"><div><h1>Verify it’s you</h1><p>Enter the 6-digit code from your authenticator app to open admin tools.</p></div></div><form class="card row" id="mv"><label class="field" style="margin:0"><span>6-digit code</span><input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></label><button class="btn primary" type="submit">Verify</button></form>`;

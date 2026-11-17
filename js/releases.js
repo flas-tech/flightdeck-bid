@@ -1,6 +1,16 @@
 // Version tracking and release notes ("What's new").
-export const APP_VERSION = '1.4.0';
+export const APP_VERSION = '1.5.0';
 export const RELEASES = [
+  { v: '1.5.0', d: '2026-11-16', t: 'Easier setup, a staffing guide and phone fixes', items: [
+    'Setup now goes in a better order: department, aircraft, coverage and groups, time-off categories, bidding, then crew. Groups exist before you add people, so there is no going back.',
+    'The lottery "seed" is now a draw code, explained in plain words. Use New draw to pick a fresh, fair random order each period; the same code always gives the same order, so anyone can check a result.',
+    'Rotating priority has an Advance to next period button.',
+    'New Staffing & bidding guide (Help menu): how each coverage model and award method works, with pros, cons and which fits a one-airplane operation, a corporate department or a charter.',
+    'Adding crew is now a simple form: pick qualifications per aircraft type (Not qualified, PIC or SIC), add training items, and set time-off allowances. No CSV formatting needed.',
+    'Add several people at once by typing in rows or pasting a list straight from Excel or Google Sheets. Spreadsheet files still work.',
+    'Phone layout fixes: aircraft and time-off category settings now show as cards, and boxes no longer squish or overlap.',
+    'Two-factor setup keeps the same key while you switch to your authenticator app, even if the page reloads. On a phone, tap Open in authenticator app, or Copy key.',
+  ] },
   { v: '1.4.0', d: '2026-11-16', t: 'Departments, invites and user classes', items: [
     'Create your department from the start screen. You become its department admin. Free during the beta.',
     'Invite people from the new Members page: choose their class (Department admin, Scheduler, Management, Accounting or Crew), link crew to their crew profile, then copy or email the invite link. Links expire after 14 days.',

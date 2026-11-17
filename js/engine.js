@@ -367,7 +367,7 @@ export function removeLeaveFromRoster(r) {
 // ------------------------------------------------------------------ ordering methods
 export const METHODS = {
   seniority: 'Seniority',
-  lottery: 'Seeded lottery',
+  lottery: 'Lottery (random draw)',
   rotating: 'Rotating priority',
   points: 'Fairness points (least-recently honored first)',
 };
