@@ -50,6 +50,7 @@ export function resetAll() { localStorage.removeItem(KEY); S = null; }
 export function actorName() {
   if (!session.role) return 'System';
   if (session.role === 'crew') return crewName(session.userId);
+  if (session.person) return `${session.person} (${ROLES[session.role].short})`;
   return `${ROLES[session.role].short} (demo)`;
 }
 export function audit(action, detail = '', actor, justification = '') {

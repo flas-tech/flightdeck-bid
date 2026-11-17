@@ -2,11 +2,11 @@
 
 (Formerly FlightDeck Bid.) A browser demo of a modular crew-availability, bidding and trip-scheduling system for small flight departments — from one aircraft and two pilots up to a 10–50 pilot, 4–20 aircraft Part 91, Part 135 or mixed operation.
 
-> Demonstration only. All data is fictional. Guests' data stays in the browser (localStorage); signed-in users' demo department is also saved to their account. This is not an approved scheduling, regulatory-compliance or accounting system, and the rule encodings are not legal advice.
+> Demonstration only. All data is fictional. Department data is saved online and shared with the department's members. This is not an approved scheduling, regulatory-compliance or accounting system, and the rule encodings are not legal advice.
 
 ## Try it
 
-Open [schedulecaptain.com](https://schedulecaptain.com), sign in, then choose a role (Administrator / Scheduler, Management, Accounting or a crew member) and a preferred layout (calendar, staffing grid or dashboard). The chooser appears every time you sign in. Admins also see the sample departments below (regular users start with their own department):
+Open [schedulecaptain.com](https://schedulecaptain.com), sign in, pick or create a department, then a preferred layout (calendar, staffing grid or dashboard). The chooser appears every time you sign in. Super admins also see the sample departments below:
 
 | Scenario | What it shows |
 |---|---|
@@ -17,14 +17,26 @@ Open [schedulecaptain.com](https://schedulecaptain.com), sign in, then choose a 
 
 Use **Setup & rules → Data** to reset, export or import the whole dataset as JSON.
 
-## Accounts, feedback and What's new
+## Departments, roles and invites
 
-- **Accounts required**: sign in or create a free account. New users start with the guided setup for their own department, saved to their account and available on any device.
-- **Sample departments are admin-only**: the mixed fleet, PDK preset and small department samples appear only for Schedule Captain admins, for demos and support.
-- **Users & support** (admin): list every account with organization, saved department, feedback and last sign-in, and open a read-only support view of any user's saved department.
-- **Send feedback**: the button at the top of every page sends an idea, problem or question with the page, demo role and app version. Senders see status and replies on the same page.
-- **What's new**: after each update a pop-up lists what changed; every release is listed under Help → What's new.
-- **Admin inbox** (App feedback): admins set a status and reply. Admin access is claimed once with a single-use code from Account, and requires an authenticator app (two-factor) every session.
+Three levels of access:
+
+| Level | Who | Can do |
+|---|---|---|
+| Super admin | The Schedule Captain team (`app_admins`, two-factor required) | See every department and user, open a read-only support view, suspend a department, set its plan, read and answer feedback, use the sample departments |
+| Department admin | Whoever creates the department, plus anyone they promote | Invite and remove members, assign user classes, link members to crew profiles, full setup and scheduling; can view the app as any role |
+| User classes | Set per member by a department admin | Scheduler (setup, schedules, trips, approvals) · Management (scheduler rights plus exception approval) · Accounting (trip records, billing, invoices) · Crew member (own schedule, time off, bids, swaps — linked to a crew profile) |
+
+- **Self-serve beta**: any signed-in user can create a department (up to 3 per person) and becomes its department admin. Each department has `plan` (beta, trial, active, comp) and `status` (active, suspended) fields so billing can be added later; creation can be locked down to invite-only before billing starts.
+- **Invites**: on **Members**, a department admin enters an email and user class, then copies the invite link or opens it in their email app. The link works once, only for that email address, and expires after 14 days. Invitees create an account (email prefilled) or log in, and join automatically.
+- **Shared saving**: everyone in a department works on the same online copy. Changes save automatically; other members pick them up within about 20 seconds. If two people save at the same moment, the second person gets the latest version and is asked to redo their change.
+- A department always keeps at least one department admin. Members can leave a department from Account.
+
+## Feedback and What's new
+
+- **Send feedback**: the button at the top of every page sends an idea, problem or question with the page, role and app version. Senders see status and replies on the same page.
+- **What's new**: after each update a pop-up lists what changed; every release is listed under What's new.
+- **App feedback** (super admin): set a status and reply. Super admin access is claimed once with a single-use code from Account, and requires an authenticator app (two-factor) every session.
 
 Backend: Supabase (Postgres with row-level security, Auth, one `signup` edge function). The browser only holds the public publishable key; admin rights are enforced in the database (`app_admins` plus a two-factor session).
 
@@ -88,13 +100,14 @@ Then open http://localhost:8000. Opening `index.html` through `file://` is not s
 - No password-reset email yet; contact the team to reset a password. Sign-up does not verify email ownership.
 - Rate limits: 5 sign-ups per network per hour; 10 feedback messages per user per hour.
 
-- Data is stored only in the current browser; there is no backend, sharing or synchronization.
-- Roles are simulated; there is no real authentication or authorization. Anyone using the demo can change everything.
+- Membership, user classes, invites and super admin rights are enforced in the database. Within a department, the finer permissions (for example, what a crew member can edit) are enforced by the app, because the department is stored as one shared document that every member can save.
+- Invite links are copied or sent from your own email app; Schedule Captain does not send invite emails yet.
+- Saving conflicts are resolved by reloading the latest version, not by merging changes.
 - Duty and rest rules were transcribed from the eCFR ([14 CFR Part 135 Subpart F](https://www.ecfr.gov/current/title-14/chapter-I/subchapter-G/part-135/subpart-F)) for demonstration. They have not been validated by the FAA, an operator or counsel, and do not cover every provision, exception or operations specification.
 - PDK policy codes (D/A, PWO, O, U) are kept as visible, editable settings rather than assumed meanings.
 - The roster and matching engines are heuristics, not optimizers, and do not guarantee a feasible or fair outcome.
 - Which crew are Standards Captains or Peer Observers is an open item for each department; the sample flags are fictional. Whether observer time counts toward flight-time limits depends on the operator and should be confirmed.
-- Do not enter real employee, passenger or financial information in this public demo.
+- During the beta, avoid entering sensitive employee, passenger or financial information.
 
 ## Structure
 

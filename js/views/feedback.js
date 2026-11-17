@@ -1,10 +1,10 @@
 // Account, Send feedback, admin App feedback inbox and What's new.
 import { esc } from '../util.js';
-import { S, session, setState, save } from '../store.js';
-import { acct, signedIn, isAdmin, displayName, signIn, signUp, signOut, updateProfile, sendFeedback, myFeedback, allFeedback, updateFeedback, claimAdmin, mfaEnroll, mfaVerify, friendly, deleteCloud, changePassword, listUsers, loadUserState } from '../account.js';
+import { S, session } from '../store.js';
+import { acct, signedIn, isAdmin, displayName, signIn, signUp, signOut, updateProfile, sendFeedback, myFeedback, allFeedback, updateFeedback, claimAdmin, mfaEnroll, mfaVerify, friendly, changePassword, ctx, MEMBER_ROLES, removeMember, refreshAccount } from '../account.js';
 import { APP_VERSION, RELEASES, unseen, markSeen, seenVer, cmpVer } from '../releases.js';
 import { PRODUCT } from '../config.js';
-import { $, $$, modal, close, toast, badge, empty } from '../ui.js';
+import { $, $$, modal, close, toast, badge, empty, confirm } from '../ui.js';
 
 const fmtDT = d => d ? new Date(d).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
 const fmtD = d => new Date(d + 'T12:00:00').toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
@@ -16,19 +16,20 @@ const onRoute = r => (location.hash.replace(/^#\/?/, '').split('/')[0] || 'dashb
 export function noteRoute(route) { if (!['feedback', 'inbox', 'account', 'whatsnew'].includes(route)) fbFrom = location.hash || ''; }
 
 // ---------------------------------------------------------------- sign in / create account
-export function authModal(mode = 'login', after) {
+export function authModal(mode = 'login', after, email = '') {
+  const em = esc(email);
   if (acct.offline) { toast('Accounts are unavailable right now. Please try again in a few minutes.', 'bad'); return; }
   const body = m => m === 'login'
-    ? `<form id="af" class="auth-form"><label class="field"><span>Email</span><input name="email" type="email" autocomplete="username" required></label>
+    ? `<form id="af" class="auth-form"><label class="field"><span>Email</span><input name="email" type="email" autocomplete="username" value="${em}" required></label>
        <label class="field"><span>Password</span><input name="password" type="password" autocomplete="current-password" required></label>
        <p class="modal-err" id="aerr" hidden></p><button class="btn primary" type="submit">Log in</button></form>
        <p class="muted" style="margin-bottom:0">New here? <a href="#" data-sw="signup">Create a free account</a>. Forgot your password? Contact the Schedule Captain team and they can reset it.</p>`
     : `<form id="af" class="auth-form"><label class="field"><span>Your name</span><input name="display_name" autocomplete="name" maxlength="80" required></label>
        <label class="field"><span>Flight department or company (optional)</span><input name="organization" autocomplete="organization" maxlength="120"></label>
-       <label class="field"><span>Email</span><input name="email" type="email" autocomplete="username" required></label>
+       <label class="field"><span>Email</span><input name="email" type="email" autocomplete="username" value="${em}" required></label>
        <label class="field"><span>Create a password</span><input name="password" type="password" minlength="10" maxlength="128" autocomplete="new-password" required><small>At least 10 characters with letters and numbers.</small></label>
        <p class="modal-err" id="aerr" hidden></p><button class="btn primary" type="submit">Create account</button></form>
-       <p class="muted" style="margin-bottom:0">Already have an account? <a href="#" data-sw="login">Log in</a>. Your department is saved to your account. During early access, avoid sensitive personal information.</p>`;
+       <p class="muted" style="margin-bottom:0">Already have an account? <a href="#" data-sw="login">Log in</a>. Departments are shared with the people their admin invites. During early access, avoid sensitive personal information.</p>`;
   const title = m => m === 'login' ? `Log in to ${PRODUCT}` : 'Create a free account';
   const wire = card => {
     $$('[data-sw]', card).forEach(a => a.onclick = e => { e.preventDefault(); mode = a.dataset.sw; $('#mtitle').textContent = title(mode); $('.modal-body', card).innerHTML = body(mode); wire(card); });
@@ -94,7 +95,7 @@ export async function renderSend(el) {
 }
 
 // ---------------------------------------------------------------- Admin: two-factor gate
-function mfaGate(el, then) {
+export function mfaGate(el, then) {
   if (!acct.hasFactor) {
     el.innerHTML = `<div class="page-head"><div><h1>Set up two-factor sign-in</h1><p>Admin tools (feedback and user support) require an authenticator app.</p></div></div><div class="card" id="mf"><button class="btn primary" data-a="enroll">Set up authenticator</button></div>`;
     $('[data-a="enroll"]', el).onclick = async () => {
@@ -149,13 +150,13 @@ export function renderAccount(el) {
     return;
   }
   const p = acct.profile || {};
-  el.innerHTML = `<div class="page-head"><div><h1>Account</h1><p>Signed in as ${esc(acct.user.email)}${acct.listedAdmin ? ' · ' + (isAdmin() ? 'Admin (verified)' : 'Admin (two-factor needed)') : ''}.</p></div><div class="actions"><button class="btn" data-a="out">Sign out</button></div></div>
+  el.innerHTML = `<div class="page-head"><div><h1>Account</h1><p>Signed in as ${esc(acct.user.email)}${acct.listedAdmin ? ' · ' + (isAdmin() ? 'Super admin (verified)' : 'Super admin (two-factor needed)') : ''}.</p></div><div class="actions"><button class="btn" data-a="out">Sign out</button></div></div>
     <div class="grid g2" style="align-items:start">
     <form class="card" id="pf"><h2>Profile</h2><label class="field"><span>Name</span><input name="display_name" maxlength="80" value="${esc(p.display_name || '')}" required></label><label class="field"><span>Flight department or company</span><input name="organization" maxlength="120" value="${esc(p.organization || '')}"></label><button class="btn primary" type="submit">Save profile</button></form>
-    <div class="card"><h2>Saved department</h2>${acct.cloud ? `<p><strong>${esc(acct.cloud.department || 'Demo department')}</strong><br><small class="muted">Saved to your account ${esc(fmtDT(acct.cloud.updated_at))}. Changes save automatically while you are signed in.</small></p><button class="btn sm ghost" data-a="delcloud">Delete saved copy</button>` : '<p class="muted">Nothing saved yet. Your department is saved automatically as you make changes while signed in.</p>'}<p class="muted">Early access: not an approved scheduling, compliance or accounting system.</p></div>
+    <div class="card"><h2>Your departments</h2>${acct.depts.length ? `<ul class="plain">${acct.depts.map(d => `<li class="row" style="justify-content:space-between"><span><strong>${esc(d.name)}</strong><br><small class="muted">${esc(MEMBER_ROLES[d.role])} · ${d.members} member${d.members === 1 ? '' : 's'}${d.status !== 'active' ? ' · Suspended' : ''}</small></span><button class="btn sm ghost" data-a="leave" data-id="${d.id}" data-name="${esc(d.name)}">Leave</button></li>`).join('')}</ul>` : '<p class="muted">You are not in a department yet. Create one from the start screen, or open an invite link from your department admin.</p>'}<p class="muted">Department data is shared with its members and saves automatically. Early access: not an approved scheduling, compliance or accounting system.</p></div>
     <form class="card" id="pwf"><h2>Change password</h2><label class="field"><span>New password</span><input name="pw" type="password" autocomplete="new-password" minlength="10" required></label><label class="field"><span>Confirm new password</span><input name="pw2" type="password" autocomplete="new-password" minlength="10" required></label><button class="btn" type="submit">Change password</button></form>
     ${acct.listedAdmin ? '' : `<form class="card" id="cf"><h2>Admin access</h2><p class="muted">Have a one-time admin code from the ${PRODUCT} team? Enter it to turn this account into an admin. You will set up an authenticator app next.</p><label class="field"><span>Admin code</span><input name="code" autocomplete="off" required></label><button class="btn" type="submit">Claim admin access</button></form>`}
-    ${acct.listedAdmin ? `<div class="card"><h2>Admin</h2><p>${isAdmin() ? 'Two-factor verified for this session.' : 'Verify with your authenticator to open admin tools.'}</p><div class="row"><a class="btn primary" href="#/inbox">Open App feedback</a><a class="btn" href="#/users">Users &amp; support</a></div></div>` : ''}
+    ${acct.listedAdmin ? `<div class="card"><h2>Super admin</h2><p>${isAdmin() ? 'Two-factor verified for this session.' : 'Verify with your authenticator to open admin tools.'}</p><div class="row"><a class="btn primary" href="#/inbox">App feedback</a><a class="btn" href="#/departments">Departments</a><a class="btn" href="#/users">Users</a></div></div>` : ''}
     </div>`;
   $('#pf', el).onsubmit = async e => { e.preventDefault(); try { await updateProfile({ display_name: e.target.display_name.value.trim(), organization: e.target.organization.value.trim() }); toast('Profile saved'); renderAccount(el); } catch (ex) { toast(friendly(ex), 'bad'); } };
   $('#pwf', el).onsubmit = async e => { e.preventDefault(); const f = e.target; if (f.pw.value !== f.pw2.value) return toast('The passwords do not match', 'bad'); if (!/[A-Za-z]/.test(f.pw.value) || !/[0-9]/.test(f.pw.value)) return toast('Use at least 10 characters with letters and numbers', 'bad'); try { await changePassword(f.pw.value); f.reset(); toast('Password changed'); } catch (ex) { toast(friendly(ex), 'bad'); } };
@@ -163,37 +164,7 @@ export function renderAccount(el) {
   el.onclick = async e => {
     const a = e.target.closest('[data-a]')?.dataset.a;
     if (a === 'out') { await signOut(); toast('Signed out'); }
-    if (a === 'delcloud') { try { await deleteCloud(); toast('Saved copy deleted'); renderAccount(el); } catch (ex) { toast(friendly(ex), 'bad'); } }
+    if (a === 'leave') { const b = e.target.closest('[data-a]'); if (!(await confirm(`Leave ${b.dataset.name}`, 'You will lose access until a department admin invites you again.', 'Leave', 'danger'))) return; try { await removeMember(b.dataset.id, acct.user.id); toast('You left the department'); if (ctx.deptId === b.dataset.id) { location.hash = ''; location.reload(); } else renderAccount(el); } catch (ex) { toast(friendly(ex), 'bad'); } }
   };
 }
 
-// ---------------------------------------------------------------- Admin: users & support
-export async function renderUsers(el) {
-  if (!onRoute('users')) return;
-  if (!signedIn() || !acct.listedAdmin) { el.innerHTML = empty('Admin access only. Log in with an admin account.'); return; }
-  if (!isAdmin()) return mfaGate(el, () => renderUsers(el));
-  el.innerHTML = `<div class="page-head"><div><h1>Users &amp; support</h1><p>Everyone with a ${PRODUCT} account. Open a support view to see a user's saved department exactly as they built it. Support views are read-only copies: nothing you change is saved back to their account.</p></div><div class="actions"><button class="btn ghost" data-a="reload">Refresh</button></div></div><div id="ul"><p class="muted">Loading…</p></div>`;
-  let list;
-  try { list = await listUsers(); } catch (e) { if (!onRoute('users')) return; $('#ul', el).innerHTML = `<div class="alert bad">${esc(friendly(e))}</div>`; return; }
-  if (!onRoute('users')) return;
-  const q = el.dataset.q || '';
-  const draw = () => {
-    const term = (el.dataset.q || '').toLowerCase();
-    const shown = list.filter(u => !term || [u.email, u.display_name, u.organization, u.department].some(v => (v || '').toLowerCase().includes(term)));
-    $('#ut', el).innerHTML = shown.length ? `<div class="tbl-wrap"><table><thead><tr><th>User</th><th>Organization</th><th>Saved department</th><th>Feedback</th><th>Joined</th><th>Last sign-in</th><th></th></tr></thead><tbody>${shown.map(u => `<tr><td><strong>${esc(u.display_name || '—')}</strong>${u.is_admin ? ' ' + badge('Admin', 'info') : ''}<br><small class="muted">${esc(u.email)}</small></td><td>${esc(u.organization || '—')}</td><td>${u.department ? `${esc(u.department)}<br><small class="muted">${esc(fmtDT(u.saved_at))}</small>` : '<span class="muted">Nothing saved</span>'}</td><td>${u.feedback_count ? `<a href="#/inbox/all">${u.feedback_count}</a>${u.open_feedback ? ` <small class="muted">(${u.open_feedback} open)</small>` : ''}` : '0'}</td><td><small>${esc(fmtDT(u.created_at))}</small></td><td><small>${esc(fmtDT(u.last_sign_in_at) || '—')}</small></td><td>${u.department ? `<button class="btn sm" data-open="${u.id}">Open support view</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : empty('No users match.');
-  };
-  $('#ul', el).innerHTML = `<div class="row" style="justify-content:space-between;margin-bottom:10px"><strong>${list.length} account${list.length === 1 ? '' : 's'}</strong><label class="field" style="margin:0;min-width:240px"><span class="sr-only">Search users</span><input type="search" id="uq" placeholder="Search name, email, organization" value="${esc(q)}"></label></div><div id="ut"></div>`;
-  draw();
-  $('#uq', el).oninput = e => { el.dataset.q = e.target.value; draw(); };
-  el.onclick = async e => {
-    if (e.target.closest('[data-a="reload"]')) return renderUsers(el);
-    const b = e.target.closest('[data-open]'); if (!b) return;
-    const u = list.find(x => x.id === b.dataset.open); b.disabled = true;
-    try {
-      const st = await loadUserState(u.id); if (!st) throw new Error('This user has nothing saved yet.');
-      setState(st); S.supportOf = { id: u.id, email: u.email, name: u.display_name || u.email }; delete S.ownerId;
-      session.role = 'admin'; session.userId = null; save();
-      toast(`Support view: ${u.display_name || u.email}`); location.hash = '#/dashboard';
-    } catch (ex) { toast(friendly(ex), 'bad'); b.disabled = false; }
-  };
-}

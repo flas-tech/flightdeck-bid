@@ -242,3 +242,9 @@ td:first-child a, td:first-child strong { white-space: nowrap; }
 .landing { max-width: 640px; margin: 8vh auto 0; }
 .landing .card { padding: 22px; }
 .landing ul { margin: 10px 0 16px; padding-left: 20px; }
+.class-help{margin:6px 0 0;padding-left:18px;font-size:13px;color:var(--muted,#5b6470)}
+.class-help li{margin:2px 0}
+ul.plain{list-style:none;margin:0 0 10px;padding:0}
+ul.plain li{padding:8px 0;border-bottom:1px solid var(--border,#e3e6ea);gap:10px}
+#memL select{min-width:150px}
+#memL td:first-child{min-width:150px}

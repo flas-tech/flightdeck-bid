@@ -1,6 +1,13 @@
 // Version tracking and release notes ("What's new").
-export const APP_VERSION = '1.3.0';
+export const APP_VERSION = '1.4.0';
 export const RELEASES = [
+  { v: '1.4.0', d: '2026-11-16', t: 'Departments, invites and user classes', items: [
+    'Create your department from the start screen. You become its department admin. Free during the beta.',
+    'Invite people from the new Members page: choose their class (Department admin, Scheduler, Management, Accounting or Crew), link crew to their crew profile, then copy or email the invite link. Links expire after 14 days.',
+    'Everyone in a department now works from the same shared schedule. Changes save online automatically, and other members see them within about 20 seconds.',
+    'Crew members enter with their own crew view. Department admins can still view the app as any role to check what others see.',
+    'You can belong to more than one department and switch between them from the start screen. Leave a department from Account.',
+  ] },
   { v: '1.3.0', d: '2026-11-16', t: 'Your own department, saved to your account', items: [
     'Schedule Captain now lives at schedulecaptain.com.',
     'Sign in to get started. New accounts begin with the guided setup for your own department, and everything you set up is saved to your account.',
