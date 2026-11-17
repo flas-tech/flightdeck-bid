@@ -1,8 +1,8 @@
-# FlightDeck Bid
+# Schedule Captain
 
-A browser-only demo of a modular crew-availability, bidding and trip-scheduling system for small flight departments — from one aircraft and two pilots up to a 10–50 pilot, 4–20 aircraft Part 91, Part 135 or mixed operation.
+(Formerly FlightDeck Bid.) A browser demo of a modular crew-availability, bidding and trip-scheduling system for small flight departments — from one aircraft and two pilots up to a 10–50 pilot, 4–20 aircraft Part 91, Part 135 or mixed operation.
 
-> Demonstration only. All data is fictional and stays in your browser (localStorage). This is not an approved scheduling, regulatory-compliance or accounting system, and the rule encodings are not legal advice.
+> Demonstration only. All data is fictional. Guests' data stays in the browser (localStorage); signed-in users' demo department is also saved to their account. This is not an approved scheduling, regulatory-compliance or accounting system, and the rule encodings are not legal advice.
 
 ## Try it
 
@@ -16,6 +16,15 @@ Open the live demo, choose a role (Administrator / Scheduler, Management, Accoun
 | Blank setup | Empty department with the guided setup wizard |
 
 Use **Setup & rules → Data** to reset, export or import the whole dataset as JSON.
+
+## Accounts, feedback and What's new
+
+- **Free accounts** (optional): create an account or log in from the start screen. Signed-in users get their demo department saved to their account and can pick it up on another device ("My saved department"). Guests can still use everything without an account.
+- **Send feedback**: the button at the top of every page sends an idea, problem or question with the page, demo role and app version. Senders see status and replies on the same page.
+- **What's new**: after each update a pop-up lists what changed; every release is listed under Help → What's new.
+- **Admin inbox** (App feedback): admins set a status and reply. Admin access is claimed once with a single-use code from Account, and requires an authenticator app (two-factor) every session.
+
+Backend: Supabase (Postgres with row-level security, Auth, one `signup` edge function). The browser only holds the public publishable key; admin rights are enforced in the database (`app_admins` plus a two-factor session).
 
 ## Run locally
 
@@ -73,6 +82,9 @@ Then open http://localhost:8000. Opening `index.html` through `file://` is not s
 | Cross-cutting — roles, rules, audit | Role chooser, rule sets, Exceptions, Audit trail, Reports |
 
 ## Known limits
+
+- No password-reset email yet; contact the team to reset a password. Sign-up does not verify email ownership.
+- Rate limits: 5 sign-ups per network per hour; 10 feedback messages per user per hour.
 
 - Data is stored only in the current browser; there is no backend, sharing or synchronization.
 - Roles are simulated; there is no real authentication or authorization. Anyone using the demo can change everything.

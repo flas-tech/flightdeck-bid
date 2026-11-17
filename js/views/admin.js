@@ -166,7 +166,7 @@ const SECTIONS = {
     };
     $('#imp', box).onchange = async e => {
       const f = e.target.files[0]; if (!f) return;
-      try { const s = JSON.parse(await f.text()); if (s.schema !== 3 || !s.dept || !Array.isArray(s.crew)) throw new Error('Not a FlightDeck Bid v3 export'); setState(s); audit('Department imported', f.name); save(); toast('Imported'); }
+      try { const s = JSON.parse(await f.text()); if (s.schema !== 3 || !s.dept || !Array.isArray(s.crew)) throw new Error('Not a Schedule Captain v3 export'); setState(s); audit('Department imported', f.name); save(); toast('Imported'); }
       catch (err) { toast(`Import failed: ${err.message}`, 'bad'); }
     };
   },

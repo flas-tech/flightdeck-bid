@@ -14,6 +14,11 @@ import * as reports from './views/reports.js';
 import * as admin from './views/admin.js';
 import * as misc from './views/misc.js';
 import * as observersView from './views/observers.js';
+import * as fb from './views/feedback.js';
+import { acct, initAccount, onAccount, signedIn, displayName, queueCloudSave, loadCloud, signOut } from './account.js';
+import { setState } from './store.js';
+import { APP_VERSION } from './releases.js';
+import { PRODUCT } from './config.js';
 
 const ROUTES = {
   dashboard: { label: 'Dashboard', view: dashboard, ok: () => true, grp: 'Overview' },
@@ -29,6 +34,10 @@ const ROUTES = {
   exceptions: { label: 'Exceptions', view: misc.exceptions, ok: () => can('override'), grp: 'Insight', count: () => S.exceptions.filter(e => e.status === 'pending').length },
   audit: { label: 'Audit trail', view: misc.audit, ok: () => can('audit') || session.role === 'accounting', grp: 'Insight' },
   admin: { label: 'Setup & rules', view: admin, ok: () => can('configure'), grp: 'Administration' },
+  inbox: { label: 'App feedback', view: { render: fb.renderInbox }, ok: () => acct.listedAdmin, grp: 'Schedule Captain team', count: () => fb.inboxNew },
+  whatsnew: { label: 'What’s new', view: { render: fb.renderWhatsNew }, ok: () => true, grp: 'Help', badge: () => fb.updatedChip() ? 'New' : '' },
+  feedback: { label: 'Send feedback', view: { render: fb.renderSend }, ok: () => true, grp: 'Help' },
+  account: { label: 'Account', view: { render: fb.renderAccount }, ok: () => true, grp: 'Help' },
 };
 
 function parseHash() { const [, route = 'dashboard', ...rest] = (location.hash || '#/dashboard').split('/'); return { route, param: rest.join('/') }; }
@@ -39,21 +48,26 @@ function renderNav(active) {
     if (!r.ok()) continue;
     if (r.grp !== grp) { grp = r.grp; html += `<div class="grp">${esc(grp)}</div>`; }
     const n = r.count ? r.count() : 0;
-    html += `<a href="#/${k}" class="${k === active ? 'on' : ''}" ${k === active ? 'aria-current="page"' : ''}>${esc(r.label)}${n ? `<span class="n">${n}</span>` : ''}</a>`;
+    const bd = r.badge ? r.badge() : '';
+    html += `<a href="#/${k}" class="${k === active ? 'on' : ''}" ${k === active ? 'aria-current="page"' : ''}>${esc(r.label)}${n ? `<span class="n">${n}</span>` : bd ? `<span class="n">${esc(bd)}</span>` : ''}</a>`;
   }
+  html += `<a href="#" data-switch>Switch user or role</a><div class="ver-line">Version ${APP_VERSION}</div>`;
   $('#side').innerHTML = html;
+  $('[data-switch]', $('#side')).onclick = e => { e.preventDefault(); session.role = null; $('#side').classList.remove('open'); chooser(); };
 }
 function renderTop() {
   $('#deptName').textContent = S.dept.name;
   const mode = { '91': 'Part 91', '135': 'Part 135', mixed: 'Mixed 91 / 135' }[S.dept.mode];
   const who = session.role === 'crew' ? crewName(session.userId) : ROLES[session.role].label;
   $('#topMeta').innerHTML = `<span class="badge info">${esc(mode)}</span><span class="badge ${tripsOn() ? 'ok' : 'muted'}">Trip module ${tripsOn() ? 'on' : 'off'}</span><span class="badge">${esc(who)}</span><span class="badge muted">Today ${esc(D.label(TODAY))}</span>`;
+  const ab = $('#acctBtn'); ab.textContent = signedIn() ? initials(displayName()) : 'Log in'; ab.title = signedIn() ? `Account: ${displayName()}` : 'Log in or create a free account'; ab.classList.toggle('avatar', signedIn());
   const n = myNotifications().filter(x => !x.read).length; const b = $('#bellCount'); b.hidden = !n; b.textContent = n > 99 ? '99+' : n;
 }
 export function render() {
   if (!session.role || !S) return;
   let { route, param } = parseHash();
   if (!ROUTES[route] || !ROUTES[route].ok()) route = 'dashboard';
+  fb.noteRoute(route);
   renderTop(); renderNav(route);
   const main = $('#view'); const y = window.scrollY;
   if (session.role === 'crew' && !S.crew.some(c => c.id === session.userId)) { main.innerHTML = '<div class="empty"><p>This department has no crew profile for you yet. Use Switch user and sign in as Administrator / Scheduler to add crew.</p></div>'; return; }
@@ -67,16 +81,19 @@ export function render() {
 // ---------------------------------------------------------------- interface chooser (shown at every load)
 function chooser() {
   const el = $('#chooser'); el.hidden = false;
-  const st = { scenario: S ? 'keep' : 'coastal', role: 'admin', userId: '', layout: 'calendar' };
+  const st = { scenario: S ? 'keep' : 'coastal', role: 'admin', userId: '', layout: 'calendar' }; let cloudState = null;
   const draw = () => {
-    const crewList = st.scenario === 'keep' ? S.crew : SCENARIOS[st.scenario].build(TODAY).crew;
+    if (st.scenario === 'cloud' && !(signedIn() && acct.cloud)) st.scenario = S ? 'keep' : 'coastal';
+    const crewList = st.scenario === 'keep' ? S.crew : st.scenario === 'cloud' ? (cloudState?.crew || []) : SCENARIOS[st.scenario].build(TODAY).crew;
     if (st.role === 'crew' && !crewList.some(c => c.id === st.userId)) st.userId = crewList.find(c => c.group === 'Pilots')?.id || crewList[0]?.id || '';
     const opt = (k, v, title, desc) => `<button class="opt ${st[k] === v ? 'on' : ''}" data-k="${k}" data-v="${esc(v)}" aria-pressed="${st[k] === v}"><strong>${esc(title)}</strong><span>${esc(desc)}</span></button>`;
     el.innerHTML = `<div class="choose">
-      <h1>How would you like to view FlightDeck Bid today?</h1>
-      <p class="muted">This demo asks every time you open it. Everything is fictional and stays in this browser — nothing is sent to a server.</p>
+      <div class="choose-brand">${LOGO}<div><strong>${PRODUCT}</strong><small>Crew availability, bidding and trip scheduling for flight departments</small></div></div>
+      <div class="acct-bar">${!acct.ready && localStorage.getItem('sc-auth') ? `<span class="muted">Checking your account…</span>` : signedIn() ? `<span>Signed in as <strong>${esc(displayName())}</strong></span><a href="#" data-acct="out">Sign out</a>` : `<span>Try it as a guest, or keep your demo department and send feedback with a free account.</span><span class="row"><button class="btn sm primary" data-acct="signup">Create free account</button><button class="btn sm" data-acct="login">Log in</button></span>`}</div>
+      <h1>How would you like to view ${PRODUCT} today?</h1>
+      <p class="muted">This demo asks every time you open it. Everything is fictional. ${signedIn() ? 'Your demo department is saved to your account as you work.' : 'As a guest, your demo data stays in this browser.'}</p>
       <h2><span class="step-n">1</span>Department</h2>
-      <div class="opts">${S ? opt('scenario', 'keep', `Continue: ${S.dept.name}`, 'Keep your current demo data and changes.') : ''}${Object.entries(SCENARIOS).map(([k, s]) => opt('scenario', k, s.label, s.desc)).join('')}</div>
+      <div class="opts">${signedIn() && acct.cloud ? opt('scenario', 'cloud', `My saved department: ${acct.cloud.department || 'Demo'}`, `Saved to your account ${new Date(acct.cloud.updated_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.`) : ''}${S ? opt('scenario', 'keep', `Continue: ${S.dept.name}`, 'Keep your current demo data and changes.') : ''}${Object.entries(SCENARIOS).map(([k, s]) => opt('scenario', k, s.label, s.desc)).join('')}</div>
       <h2><span class="step-n">2</span>Role</h2>
       <div class="opts">${opt('role', 'admin', 'Administrator / Scheduler', 'Configure, build trips, generate, lock and publish.')}${opt('role', 'crew', 'Crew member', 'View schedule, request time off, bid and swap.')}${opt('role', 'accounting', 'Accounting / Finance', 'Trip records, billing fields, invoices, period reports.')}${opt('role', 'management', 'Management', 'All scheduler rights plus exception approval.')}</div>
       ${st.role === 'crew' ? `<h2><span class="step-n">3</span>Who are you?</h2><div class="field" style="max-width:360px"><select id="chUser" aria-label="Crew member">${crewList.filter(c => c.status === 'active').map(c => `<option value="${c.id}" ${c.id === st.userId ? 'selected' : ''}>${esc(c.name)} — ${esc(c.group)}${c.quals.length ? ' · ' + esc(c.quals.map(q => q.type + ' ' + q.seat).join(', ')) : ''}</option>`).join('')}</select>${crewList.length ? '' : '<small>No crew in this department yet — sign in as Administrator first to add crew.</small>'}</div>` : ''}
@@ -84,28 +101,40 @@ function chooser() {
       <div class="opts">${opt('layout', 'calendar', 'Calendar', 'Month view with daily chips.')}${opt('layout', 'grid', 'Staffing grid', 'Crew × day roster with coverage row.')}${opt('layout', 'dashboard', 'Dashboard', 'Start from alerts, approvals and KPIs.')}</div>
       <div class="row"><button class="btn primary" id="enter">Enter demo</button>${st.scenario !== 'keep' && S ? '<small class="muted">Loading a department replaces the current demo data in this browser.</small>' : ''}</div>
     </div>`;
-    $$('.opt', el).forEach(b => b.onclick = () => { st[b.dataset.k] = b.dataset.v; draw(); });
+    $$('.opt', el).forEach(b => b.onclick = async () => { st[b.dataset.k] = b.dataset.v; if (st.scenario === 'cloud' && !cloudState) { try { cloudState = await loadCloud(); } catch (e) { toast('Could not load your saved department', 'bad'); st.scenario = S ? 'keep' : 'coastal'; } } draw(); });
+    $$('[data-acct]', el).forEach(b => b.onclick = async e => { e.preventDefault(); const a = b.dataset.acct; if (a === 'out') { await signOut(); cloudState = null; toast('Signed out'); } else fb.authModal(a); });
     $('#chUser', el)?.addEventListener('change', e => st.userId = e.target.value);
     $('#enter', el).onclick = () => {
-      if (st.scenario !== 'keep') loadScenario(st.scenario);
-      if (st.scenario !== 'keep' && S.crew.length) { generateRoster(); audit('Roster generated', 'Initial proposed roster for demo scenario', 'System'); save(); }
+      if (st.scenario === 'cloud') { if (!cloudState) return toast('Your saved department is still loading', 'bad'); setState(cloudState); }
+      else if (st.scenario !== 'keep') loadScenario(st.scenario);
+      if (!['keep', 'cloud'].includes(st.scenario) && S.crew.length) { generateRoster(); audit('Roster generated', 'Initial proposed roster for demo scenario', 'System'); save(); }
       session.role = st.role; session.userId = st.role === 'crew' ? st.userId : null; session.layout = st.layout;
       audit('Signed in (demo)', `${ROLES[st.role].label}${st.role === 'crew' ? ' — ' + crewName(st.userId) : ''}; layout ${st.layout}`); save();
       el.hidden = true; el.innerHTML = '';
       const dest = !S.dept.setupComplete && can('configure') ? '#/admin/setup' : st.layout === 'dashboard' ? '#/dashboard' : '#/schedule';
       if (location.hash === dest) render(); else location.hash = dest;
       toast(`Signed in as ${st.role === 'crew' ? crewName(st.userId) : ROLES[st.role].label}`);
+      setTimeout(() => fb.whatsNewPopup(), 400);
     };
   };
+  chooser.redraw = draw;
   draw();
 }
+
+const LOGO = '<svg viewBox="0 0 32 32" width="40" height="40" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#1f4f74"/><rect x="7" y="9" width="18" height="15" rx="2" fill="none" stroke="#fff" stroke-width="1.8"/><path d="M7 13.5h18M11 7v4M21 7v4" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><path d="M16 15.6l1.2 2.5 2.7.3-2 1.8.6 2.7-2.5-1.4-2.5 1.4.6-2.7-2-1.8 2.7-.3z" fill="#e8b04a"/></svg>';
+const initials = n => (n || '?').split(/[\s@.]+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('');
 
 function boot() {
   load();
   onChange(render);
+  onChange(() => { if (signedIn() && session.role) queueCloudSave(S); });
+  onAccount(() => { if (!$('#chooser').hidden) chooser.redraw?.(); else if (session.role && S) render(); });
+  initAccount();
   window.addEventListener('hashchange', render);
   $('#switchUser').onclick = () => { session.role = null; chooser(); };
   $('#bell').onclick = () => { location.hash = '#/notifications'; };
+  $('#fbBtn').onclick = () => { location.hash = '#/feedback'; };
+  $('#acctBtn').onclick = () => { if (signedIn()) location.hash = '#/account'; else fb.authModal('login'); };
   $('#navToggle').onclick = () => { const o = $('#side').classList.toggle('open'); $('#navToggle').setAttribute('aria-expanded', String(o)); };
   chooser();
 }

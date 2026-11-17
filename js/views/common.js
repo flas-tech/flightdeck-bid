@@ -29,7 +29,7 @@ export function legend() {
 }
 export function crewOpts(list, value, blank = '') { return `${blank ? `<option value="">${esc(blank)}</option>` : ''}${list.map(c => `<option value="${c.id}" ${c.id === value ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}`; }
 export function printDoc(title, html) {
-  const p = $('#printArea'); p.innerHTML = `<h1>${esc(title)}</h1><p style="font-size:11px">${esc(S.dept.name)} · Generated ${esc(new Date().toLocaleString())} · FlightDeck Bid demonstration (fictional data)</p>${html}`;
+  const p = $('#printArea'); p.innerHTML = `<h1>${esc(title)}</h1><p style="font-size:11px">${esc(S.dept.name)} · Generated ${esc(new Date().toLocaleString())} · Schedule Captain demonstration (fictional data)</p>${html}`;
   window.print();
 }
 export const who = id => esc(crewName(id));

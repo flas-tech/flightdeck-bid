@@ -3,24 +3,26 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FlightDeck Bid — Crew & Trip Scheduling Demo</title>
-  <meta name="description" content="Modular flight-department crew availability, bidding, trip scheduling and accounting record demo. Fictional data, browser-local.">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f4f74'/%3E%3Cpath d='M6 18l20-8-6 14-4-5-6 3 2-4z' fill='%23fff'/%3E%3C/svg%3E">
+  <title>Schedule Captain — Crew & Trip Scheduling for Flight Departments</title>
+  <meta name="description" content="Schedule Captain: modular flight-department crew availability, bidding, trip scheduling and accounting records. Public demo with fictional data.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f4f74'/%3E%3Crect x='7' y='9' width='18' height='15' rx='2' fill='none' stroke='%23fff' stroke-width='1.8'/%3E%3Cpath d='M7 13.5h18' stroke='%23fff' stroke-width='1.8'/%3E%3Cpath d='M16 15.6l1.2 2.5 2.7.3-2 1.8.6 2.7-2.5-1.4-2.5 1.4.6-2.7-2-1.8 2.7-.3z' fill='%23e8b04a'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <a class="skip" href="#view">Skip to content</a>
-  <div class="demo-banner" role="note">Demonstration only — fictional data stored in this browser. Not an approved scheduling, compliance or accounting system.</div>
+  <div class="demo-banner" role="note">Demonstration only — use fictional data. Not an approved scheduling, compliance or accounting system.</div>
   <header class="top">
     <button class="icon-btn nav-toggle" id="navToggle" aria-label="Open navigation" aria-expanded="false">☰</button>
-    <a class="brand" href="#/dashboard" aria-label="FlightDeck Bid home">
-      <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><rect width="32" height="32" rx="7" fill="currentColor"/><path d="M6 18l20-8-6 14-4-5-6 3 2-4z" fill="#fff"/></svg>
-      <span><strong>FlightDeck Bid</strong><small id="deptName"></small></span>
+    <a class="brand" href="#/dashboard" aria-label="Schedule Captain home">
+      <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><rect width="32" height="32" rx="7" fill="currentColor"/><rect x="7" y="9" width="18" height="15" rx="2" fill="none" stroke="#fff" stroke-width="1.8"/><path d="M7 13.5h18M11 7v4M21 7v4" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><path d="M16 15.6l1.2 2.5 2.7.3-2 1.8.6 2.7-2.5-1.4-2.5 1.4.6-2.7-2-1.8 2.7-.3z" fill="#e8b04a"/></svg>
+      <span><strong>Schedule Captain</strong><small id="deptName"></small></span>
     </a>
     <div class="top-meta" id="topMeta"></div>
     <div class="top-actions">
       <button class="icon-btn bell" id="bell" aria-label="Notifications"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5.5-6.84V3a1.5 1.5 0 0 0-3 0v1.16A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2Z"/></svg><span class="dot" id="bellCount" hidden></span></button>
+      <button class="btn ghost sm fb-btn" id="fbBtn" title="Send an idea, problem or question to the Schedule Captain team">Send feedback</button>
       <button class="btn ghost sm" id="switchUser">Switch user</button>
+      <button class="btn sm acct-btn" id="acctBtn">Log in</button>
     </div>
   </header>
   <div class="shell">
@@ -31,6 +33,7 @@
   <div id="chooser" hidden></div>
   <div id="toasts" aria-live="polite"></div>
   <div id="printArea"></div>
+  <script src="js/vendor/supabase.js"></script>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>
